@@ -40,7 +40,7 @@ for setting up Node.js on machines that don't have `winget`.
  Select an option [R, C, D, S, U, T, I, X, O, M, Q]:
 ```
 
-> **Quick start (PowerShell):** `irm https://lc.cx/opencode | iex`
+> **Quick install (PowerShell):** `irm https://lc.cx/opencode | iex`
 
 ---
 
@@ -49,8 +49,8 @@ for setting up Node.js on machines that don't have `winget`.
 - [Requirements](#requirements)
 - [Files in this repo](#files-in-this-repo)
 - [Getting started](#getting-started)
-  - [Run it directly (no install)](#run-it-directly-no-install)
   - [Install with one PowerShell command](#install-with-one-powershell-command)
+  - [Run it directly (no install)](#run-it-directly-no-install)
 - [Launch it by typing `oc`](#launch-it-by-typing-oc)
 - [Menu options explained](#menu-options-explained)
   - [[R] Run OpenCode (current folder)](#r-run-opencode-current-folder)
@@ -106,35 +106,38 @@ The launcher also creates one file at runtime:
 
 ## Getting started
 
-### Run it directly (no install)
-
-To open the menu right away without installing anything, run this in PowerShell:
-
-```powershell
-irm https://lc.cx/opencode | iex
-```
-
-`https://lc.cx/opencode` is a short link to `run.ps1` in this repo. It downloads the launcher
-(cached in `%LOCALAPPDATA%\OpenCodeLauncher`) and opens the menu. It does **not** create a
-shortcut or change your `PATH`. If you're offline it falls back to the cached copy from a
-previous run.
-
-The full URL, if you prefer it or want to see the target:
-
-```powershell
-irm https://raw.githubusercontent.com/JagerWayne/opencode-launcher/main/run.ps1 | iex
-```
-
 ### Install with one PowerShell command
 
 On any Windows machine, open PowerShell and run:
 
 ```powershell
+irm https://lc.cx/opencode | iex
+```
+
+`https://lc.cx/opencode` is a short link to `install.ps1` in this repo. It downloads the
+launcher to `%LOCALAPPDATA%\OpenCodeLauncher`, creates the `oc` shortcut, and puts it on your
+`PATH`. Then just type `oc` in any command window. No git or clone needed.
+
+The full URL, if you prefer it or want to verify the target:
+
+```powershell
 irm https://raw.githubusercontent.com/JagerWayne/opencode-launcher/main/install.ps1 | iex
 ```
 
-That downloads the launcher to `%LOCALAPPDATA%\OpenCodeLauncher`, creates the `oc` shortcut,
-and puts it on your `PATH`. Then just type `oc` in any command window. No git or clone needed.
+### Run it directly (no install)
+
+To open the menu right away without installing anything, run this in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/JagerWayne/opencode-launcher/main/run.ps1 | iex
+```
+
+It downloads the launcher (cached in `%LOCALAPPDATA%\OpenCodeLauncher`) and opens the menu.
+It does **not** create a shortcut or change your `PATH`. If you're offline it falls back to the
+cached copy from a previous run.
+
+> The `lc.cx/opencode` short link points at the **installer** (`install.ps1`). If you'd rather
+> it ran the menu without installing, point the short link at `run.ps1` instead.
 
 `install.ps1` accepts a few options if you run it as a file:
 
