@@ -3,8 +3,8 @@
   opencode-launcher.ps1 - OpenCode Launcher v2.
 
   A coloured, keypress-driven menu for common opencode actions:
-  run, resume, run-in-folder, web server, update, install/repair, uninstall,
-  and backup / restore.
+  run, resume, open-a-folder, web server, update, install/repair, uninstall,
+  backup / restore, and checking the launcher itself for updates.
 
   Entry point: the "oc" shim (oc.cmd on your PATH, created by option [O]),
   or run this file directly:
@@ -15,8 +15,10 @@ param([switch]$NoMenu)
 
 $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "2.0"
+$LauncherVersion = "2.1"
+$LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
 
@@ -28,6 +30,21 @@ $BackupScript = Join-Path $LauncherDir "opencode-backup.ps1"
 $ShimDir      = Join-Path $env:USERPROFILE ".local\bin"
 $ShimPath     = Join-Path $ShimDir "oc.cmd"
 $OpenCodePkg  = "@opencode/cli"
+
+# Where to look for launcher updates, and which files to refresh.
+$UpdateRepo   = "JagerWayne/opencode-launcher"
+$UpdateBranch = "main"
+$UpdateRaw    = "https://raw.githubusercontent.com/$UpdateRepo/$UpdateBranch"
+$UpdateFiles  = @(
+  "VERSION",
+  "opencode-backup.ps1",
+  "opencode-backup.cmd",
+  "install-node.ps1",
+  "install.ps1",
+  "run.ps1",
+  "run.bat",
+  "opencode-launcher.ps1"
+)
 
 # ----- colours / theme -------------------------------------------------------
 
@@ -74,13 +91,15 @@ function Refresh-Status { $script:Status = Get-Status }
 # ----- drawing ---------------------------------------------------------------
 
 function Write-Title {
-  param([string]$Title)
-  $bar = "   " + $Title
-  $ver = "v$LauncherVersion"
-  $pad = 60 - $bar.Length - $ver.Length
+  param([string]$Title, [string]$Author = "")
+  $left = "   " + $Title
+  if ($Author) { $left = $left + "  by " + $Author }
+  $right = "v$LauncherVersion"
+  $width = 64
+  $pad = $width - $left.Length - $right.Length
   if ($pad -lt 1) { $pad = 1 }
   Write-Host ""
-  Write-Host ($bar + (" " * $pad) + $ver + " ") -BackgroundColor DarkCyan -ForegroundColor White
+  Write-Host ($left + (" " * $pad) + $right + " ") -BackgroundColor DarkCyan -ForegroundColor White
   Write-Host ""
 }
 
@@ -142,7 +161,7 @@ function Invoke-OpenCode {
   if (-not (Test-Command "opencode")) {
     Write-Host ""
     Write-Note "opencode is not installed or not on PATH." $C_Bad
-    Write-Note "Use Manage -> [I] Install / Repair OpenCode." $C_Hint
+    Write-Note "Use Manage -> [I] Install or repair OpenCode." $C_Hint
     Pause-Menu
     return
   }
@@ -203,7 +222,7 @@ function Action-Run      { Invoke-OpenCode -Arguments @() -Dir (Get-Location).Pa
 function Action-Continue { Invoke-OpenCode -Arguments @("--continue") -Dir (Get-Location).Path }
 
 function Action-Folder {
-  Write-Title "Run in a specific folder"
+  Write-Title "Open a folder"
   Write-Note "Enter a folder path (you can drag a folder onto this window),"
   Write-Note "or press Enter to cancel."
   Write-Host ""
@@ -223,7 +242,7 @@ function Action-Folder {
 function Action-Web {
   if (-not (Test-Command "opencode")) {
     Write-Host ""
-    Write-Note "opencode is not installed. Use Manage -> [I] Install / Repair." $C_Bad
+    Write-Note "opencode is not installed. Use Manage -> [I] Install or repair." $C_Bad
     Pause-Menu
     return
   }
@@ -240,7 +259,7 @@ function Manage-Update {
   Write-Title "Update OpenCode"
   if (-not (Test-Command "opencode")) {
     Write-Host ""
-    Write-Note "opencode is not installed. Use [I] Install / Repair." $C_Bad
+    Write-Note "opencode is not installed. Use [I] Install or repair." $C_Bad
     Pause-Menu; return
   }
   Write-Note "Running: opencode upgrade" $C_Hint
@@ -251,7 +270,7 @@ function Manage-Update {
 }
 
 function Manage-Install {
-  Write-Title "Install / Repair OpenCode"
+  Write-Title "Install or Repair OpenCode"
   if (-not (Test-Command "npm")) {
     Write-Host ""
     Write-Note "npm was not found. Node.js is required and will be installed first." $C_Warn
@@ -310,12 +329,12 @@ function Manage-Uninstall {
 }
 
 function Manage-Backup {
-  Write-Title "Backup opencode"
+  Write-Title "Back Up OpenCode"
   if (-not (Test-Path $BackupScript)) {
     Write-Note "Backup script not found: $BackupScript" $C_Bad
     Pause-Menu; return
   }
-  Write-Note "Running backup..." $C_Hint
+  Write-Note "Saving your config, API keys and sessions..." $C_Hint
   Write-Host ""
   & $BackupScript -Backup
   Pause-Menu
@@ -324,7 +343,7 @@ function Manage-Backup {
 function Manage-RestoreMenu {
   $archiveDir = Join-Path $env:USERPROFILE ".config\opencode\backup\archives"
   while ($true) {
-    Write-Title "Restore opencode"
+    Write-Title "Restore a Backup"
     $archives = @()
     if (Test-Path $archiveDir) {
       $archives = @(Get-ChildItem $archiveDir -Filter "opencode-backup-*" -File | Sort-Object LastWriteTime -Descending)
@@ -333,7 +352,7 @@ function Manage-RestoreMenu {
       Write-Note "No backups found." $C_Warn
       Pause-Menu; return
     }
-    Write-Note "Select a backup to restore:" $C_Hint
+    Write-Note "Choose a backup to restore (newest first):" $C_Hint
     Write-Host ""
     for ($i = 0; $i -lt $archives.Count; $i++) {
       $a = $archives[$i]
@@ -364,8 +383,65 @@ function Manage-RestoreMenu {
   }
 }
 
+function Get-RemoteLauncherVersion {
+  try {
+    $resp = Invoke-WebRequest -Uri "$UpdateRaw/VERSION" -UseBasicParsing -TimeoutSec 15
+    return ("$($resp.Content)").Trim()
+  } catch {
+    return $null
+  }
+}
+
+function Manage-CheckLauncherUpdate {
+  Write-Title "Check for Launcher Updates"
+  Write-Note "Installed version: v$LauncherVersion" $C_Hint
+  Write-Note "Checking GitHub for the latest version..." $C_Hint
+  $remote = Get-RemoteLauncherVersion
+  if (-not $remote) {
+    Write-Host ""
+    Write-Note "Could not reach GitHub (are you offline?). Try again later." $C_Warn
+    Pause-Menu; return
+  }
+  $newer = $false
+  try { $newer = ([version]$remote -gt [version]$LauncherVersion) } catch { $newer = $false }
+  Write-Host ""
+  if (-not $newer) {
+    Write-Note "You are up to date (v$LauncherVersion)." $C_Good
+    Pause-Menu; return
+  }
+  Write-Note "A newer launcher is available: v$LauncherVersion  ->  v$remote" $C_Warn
+  Write-Host ""
+  $ans = Read-Host "   Update the launcher now? Type YES to update"
+  if ($ans -ne "YES") { return }
+
+  Write-Host ""
+  $ok = 0; $fail = 0
+  foreach ($f in $UpdateFiles) {
+    try {
+      $text = (Invoke-WebRequest -Uri "$UpdateRaw/$f" -UseBasicParsing -TimeoutSec 30).Content
+      if ($f -like "*.cmd" -or $f -like "*.bat") {
+        $text = ($text -replace "`r`n", "`n") -replace "`n", "`r`n"
+      }
+      [IO.File]::WriteAllText((Join-Path $LauncherDir $f), $text, (New-Object Text.UTF8Encoding($false)))
+      Write-Note "updated  $f" $C_Good
+      $ok++
+    } catch {
+      Write-Note "failed   $f  ($($_.Exception.Message))" $C_Bad
+      $fail++
+    }
+  }
+  Write-Host ""
+  if ($fail -eq 0) {
+    Write-Note "Launcher updated to v$remote." $C_Good
+    Write-Note "Close and reopen the launcher to use the new version." $C_Hint
+  } else {
+    Write-Note "Updated $ok file(s); $fail failed. Try again on a stable connection." $C_Warn
+  }
+  Pause-Menu
+}
+
 function Manage-SetupShortcut {
-  Write-Title 'Set up the "oc" command shortcut'
+  Write-Title 'Set Up the "oc" Command'
   Write-Note "Creates a small shim so typing  oc  opens this launcher:"
   Write-Note "  $ShimPath" $C_Label
   Write-Host ""
@@ -383,7 +459,7 @@ function Manage-SetupShortcut {
 }
 
 function Manage-UninstallLauncher {
-  Write-Title "Uninstall Launcher"
+  Write-Title "Uninstall This Launcher"
   Write-Note "Removes the oc shortcut and the launcher files:" $C_Warn
   Write-Note "  $ShimPath" $C_Hint
   Write-Note "  $LauncherDir" $C_Hint
@@ -394,7 +470,7 @@ function Manage-UninstallLauncher {
 
   Set-Location $env:USERPROFILE
   Remove-Item $ShimPath -Force -ErrorAction SilentlyContinue
-  foreach ($f in @("opencode-launcher.ps1", "opencode-backup.ps1", "opencode-backup.cmd", "install-node.ps1")) {
+  foreach ($f in @("opencode-launcher.ps1", "opencode-backup.ps1", "opencode-backup.cmd", "install-node.ps1", "install.ps1", "run.ps1", "run.bat", "VERSION")) {
     Remove-Item (Join-Path $LauncherDir $f) -Force -ErrorAction SilentlyContinue
   }
   Remove-Item $LauncherDir -Force -Recurse -ErrorAction SilentlyContinue
@@ -410,18 +486,19 @@ function Manage-UninstallLauncher {
 
 function Show-ManageMenu {
   while ($true) {
-    Write-Title "Manage OpenCode"
+    Write-Title "Manage"
     Write-StatusLine
     Write-Section "OPENCODE"
     Write-Item "U" "Update OpenCode"              "opencode upgrade"
-    Write-Item "I" "Install / Repair OpenCode"    "npm install -g"
+    Write-Item "I" "Install or repair OpenCode"   "sets up Node if needed"
     Write-Item "X" "Uninstall OpenCode"           "keeps config + keys"
-    Write-Section "DATA"
-    Write-Item "B" "Backup"                       "config, keys, launcher"
-    Write-Item "R" "Restore"                      "pick a backup"
+    Write-Section "BACKUPS"
+    Write-Item "B" "Back up settings and keys"    "config, keys, sessions"
+    Write-Item "R" "Restore from a backup"        "pick an archive"
     Write-Section "LAUNCHER"
-    Write-Item "O" 'Set up the "OC" shortcut'
-    Write-Item "L" "Uninstall Launcher"
+    Write-Item "C" "Check for launcher updates"   "this menu"
+    Write-Item "O" 'Create the "oc" command'      "open from any terminal"
+    Write-Item "L" "Uninstall this launcher"
     Write-Back
 
     switch (Read-MenuKey) {
@@ -430,6 +507,7 @@ function Show-ManageMenu {
       "X"   { Manage-Uninstall }
       "B"   { Manage-Backup }
       "R"   { Manage-RestoreMenu }
+      "C"   { Manage-CheckLauncherUpdate }
       "O"   { Manage-SetupShortcut }
       "L"   { Manage-UninstallLauncher }
       "ESC" { return }
@@ -442,17 +520,17 @@ function Show-ManageMenu {
 function Show-MainMenu {
   while ($true) {
     try { Clear-Host } catch {}
-    Write-Title "OPENCODE LAUNCHER"
+    Write-Title "OpenCode Launcher" -Author $LauncherAuthor
     Write-StatusLine
     Write-Host "   Folder " -NoNewline -ForegroundColor $C_Hint
     Write-Host (Get-Location).Path -ForegroundColor $C_Hint
-    Write-Section "RUN"
-    Write-Item "R" "Run OpenCode"                 "this folder"
-    Write-Item "C" "Continue last session"        "--continue"
-    Write-Item "F" "Run in a specific folder"     "prompt for a path"
-    Write-Item "S" "Launch Web Server"            "opencode web"
+    Write-Section "START"
+    Write-Item "R" "Run OpenCode here"            "this folder"
+    Write-Item "C" "Resume last session"          "picks up where you left off"
+    Write-Item "F" "Open a folder..."             "choose a project folder"
+    Write-Item "S" "Open web interface"           "opencode web"
     Write-Section "MANAGE"
-    Write-Item "M" "Manage"                       "update, backup, restore..."
+    Write-Item "M" "Manage"                       "update, back up, restore..."
     Write-Section "EXIT"
     Write-Item "Q" "Quit"
     Write-Host ""
