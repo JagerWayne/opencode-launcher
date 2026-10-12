@@ -25,7 +25,6 @@ $LauncherAuthor  = "Wayne Scicluna"
 $LauncherDir = $PSScriptRoot
 if (-not $LauncherDir) { $LauncherDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 
-$NodeScript   = Join-Path $LauncherDir "install-node.ps1"
 $BackupScript = Join-Path $LauncherDir "opencode-backup.ps1"
 $ShimDir      = Join-Path $env:USERPROFILE ".local\bin"
 $ShimPath     = Join-Path $ShimDir "oc.cmd"
@@ -39,7 +38,6 @@ $UpdateFiles  = @(
   "VERSION",
   "opencode-backup.ps1",
   "opencode-backup.cmd",
-  "install-node.ps1",
   "install.ps1",
   "run.ps1",
   "run.bat",
@@ -73,7 +71,19 @@ function Pause-Menu {
 
 function Test-Command {
   param([string]$Name)
-  return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+  if (Get-Command $Name -ErrorAction SilentlyContinue) { return $true }
+  # Get-Command can cache PATH lookups; where.exe rescans the current PATH.
+  return [bool](& where.exe $Name 2>$null)
+}
+
+function Update-SessionPath {
+  # Refresh this process's PATH from the machine + user environment so a
+  # freshly installed Node.js is found without reopening the launcher.
+  try {
+    $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $user    = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ";"
+  } catch {}
 }
 
 function Get-Status {
@@ -278,26 +288,20 @@ function Manage-Install {
   Write-Title "Install or Repair OpenCode"
   if (-not (Test-Command "npm")) {
     Write-Host ""
-    Write-Note "npm was not found. Node.js is required and will be installed first." $C_Warn
+    Write-Note "Node.js (which provides npm) is required, but npm was not found." $C_Warn
+    Write-Note "Download and install the Node.js LTS build from:" $C_Hint
     Write-Host ""
-    if (Test-Command "winget") {
-      Write-Note "Using winget..." $C_Hint
-      & winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
-      $env:Path = "$env:ProgramFiles\nodejs;" + $env:Path
-    } elseif (Test-Path $NodeScript) {
-      Write-Note "winget not found - downloading Node.js directly..." $C_Hint
-      & powershell -NoProfile -ExecutionPolicy Bypass -File $NodeScript
-      $env:Path = "$env:ProgramFiles\nodejs;" + $env:Path
-    } else {
-      Write-Host ""
-      Write-Note "Node.js is missing and could not be installed automatically." $C_Bad
-      Write-Note "Install it from https://nodejs.org/ and run this again." $C_Hint
-      Pause-Menu; return
-    }
+    Write-Note "    https://nodejs.org/" $C_Label
+    Write-Host ""
+    Write-Note "Install it, then press any key to check again." $C_Hint
+    [void][Console]::ReadKey($true)
+    Update-SessionPath
     if (-not (Test-Command "npm")) {
       Write-Host ""
-      Write-Note "npm is still unavailable. Install Node.js manually from https://nodejs.org/" $C_Bad
-      Pause-Menu; return
+      Write-Note "npm is still not available. Install Node.js from https://nodejs.org/," $C_Bad
+      Write-Note "open a new terminal, and choose Install again." $C_Hint
+      Pause-Menu
+      return
     }
   }
   Write-Host ""
@@ -475,7 +479,7 @@ function Manage-UninstallLauncher {
 
   Set-Location $env:USERPROFILE
   Remove-Item $ShimPath -Force -ErrorAction SilentlyContinue
-  foreach ($f in @("opencode-launcher.ps1", "opencode-backup.ps1", "opencode-backup.cmd", "install-node.ps1", "install.ps1", "run.ps1", "run.bat", "VERSION")) {
+  foreach ($f in @("opencode-launcher.ps1", "opencode-backup.ps1", "opencode-backup.cmd", "install.ps1", "run.ps1", "run.bat", "VERSION")) {
     Remove-Item (Join-Path $LauncherDir $f) -Force -ErrorAction SilentlyContinue
   }
   Remove-Item $LauncherDir -Force -Recurse -ErrorAction SilentlyContinue
@@ -551,4 +555,10 @@ function Show-MainMenu {
   }
 }
 
-if (-not $NoMenu) { Show-MainMenu }
+if (-not $NoMenu) {
+  if (-not $script:Status.HasOC) {
+    # OpenCode isn't installed yet - drop straight into the Install screen.
+    Manage-Install
+  }
+  Show-MainMenu
+}

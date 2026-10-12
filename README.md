@@ -78,10 +78,9 @@ line, and green/red indicators), and it falls back gracefully if the console is 
 - **Windows** with **Windows PowerShell 5.1** (included in Windows 10/11). The launcher is a
   `.ps1` file; the `oc.cmd` shim runs it with `powershell -NoProfile -ExecutionPolicy Bypass`.
 - **Node.js / npm** to install and run OpenCode — but only if you don't already have OpenCode.
-  The launcher's **[I] Install or repair** option can install Node.js for you.
-- **`winget`** is used to install Node.js automatically when it's missing. If `winget` is not
-  available, the bundled `install-node.ps1` downloads the official Node.js LTS installer
-  instead.
+  If Node.js is missing, the launcher's **[I] Install or repair** option points you at
+  <https://nodejs.org/> to download and install it yourself; it does **not** install Node.js for
+  you.
 
 No Python and no Node dependency for the launcher itself — just the PowerShell that ships with
 Windows.
@@ -95,7 +94,6 @@ Windows.
 | `opencode-launcher.ps1` | The launcher. All menus, colours and actions live here. |
 | `opencode-backup.ps1` | Backup/restore of opencode config, API keys and sessions. |
 | `opencode-backup.cmd` | Thin batch wrapper so you can run the backup from a terminal by name. |
-| `install-node.ps1` | Fallback Node.js LTS installer, used only when `winget` is unavailable. |
 | `install.ps1` | One-line installer that downloads the launcher and creates the `oc` shortcut. |
 | `run.ps1` | One-line runner that downloads and opens the menu without installing anything. |
 | `run.bat` | Double-clickable wrapper that runs `run.ps1`. |
@@ -248,7 +246,7 @@ Opens the **Manage** submenu (see below). `ESC` returns to the main menu.
 ```
     OPENCODE -----------------------------------------
    [U] Update OpenCode                   opencode upgrade
-   [I] Install or repair OpenCode        sets up Node if needed
+   [I] Install or repair OpenCode        installs opencode; needs Node.js
    [X] Uninstall OpenCode                keeps config + keys
 
     BACKUPS ------------------------------------------
@@ -273,16 +271,18 @@ Updates OpenCode to the latest version using its own updater.
 
 #### [I] Install or repair OpenCode
 
-Installs OpenCode, ensuring the prerequisites are present first.
+Installs OpenCode, checking the prerequisite first.
 
-1. **Detects prerequisites.** If `npm` is present it skips straight to step 3.
-2. **Installs Node.js if needed** — via `winget install --id OpenJS.NodeJS.LTS`, or (if
-   `winget` is unavailable) the bundled `install-node.ps1`, which downloads the latest LTS MSI
-   from nodejs.org and installs it (Windows will prompt for administrator permission via UAC).
-   If Node.js still isn't available afterwards, it tells you to install it from
-   <https://nodejs.org/> and stops.
+1. **Checks for npm.** If `npm` is present it skips straight to step 3.
+2. **Points you at Node.js if needed.** If `npm` is missing it shows the download link
+   (<https://nodejs.org/>) and waits. Install the Node.js LTS build, press a key, and it
+   re-checks; if npm still isn't found it asks you to install Node.js, open a new terminal and
+   try again. Node.js is **not** installed automatically.
 3. **Installs OpenCode.** Runs `npm install -g @opencode/cli@latest`. If OpenCode is already
    present it simply refreshes the install.
+
+> **First run:** if OpenCode isn't installed when you start the launcher, it opens this Install
+> screen straight away, then returns to the main menu.
 
 > **Note on npm 11+:** recent npm versions warn that `@opencode/cli` has a `postinstall` script
 > not covered by the new `allow-scripts` policy. The install still completes and OpenCode works.
@@ -320,7 +320,7 @@ folder or on a new machine.
 #### [L] Uninstall this launcher
 
 Removes the `oc` shortcut and the launcher files (`opencode-launcher.ps1`,
-`opencode-backup.ps1`, `opencode-backup.cmd`, `install-node.ps1`, `install.ps1`, `run.ps1`,
+`opencode-backup.ps1`, `opencode-backup.cmd`, `install.ps1`, `run.ps1`,
 `run.bat`, `VERSION`) and drops the launcher folder from your user `PATH`. OpenCode itself and
 your config/backups are **not** touched.
 
@@ -385,7 +385,7 @@ this repo:
 - If it matches or is older, it says `You are up to date (vX.Y).`
 - If a newer version exists, it offers to update and, on your confirmation, downloads the
   launcher files (`opencode-launcher.ps1`, `opencode-backup.ps1`, `opencode-backup.cmd`,
-  `install-node.ps1`, `install.ps1`, `run.ps1`, `run.bat`, `VERSION`) into the launcher folder.
+  `install.ps1`, `run.ps1`, `run.bat`, `VERSION`) into the launcher folder.
 - Batch files are re-written with CRLF line endings.
 - It never blocks: if GitHub is unreachable it reports that and returns to the menu.
 
@@ -442,9 +442,6 @@ A quick tour for anyone wanting to read or extend the launcher:
 - **`Write-OcShim` / `Add-DirToUserPath`** — write the `oc.cmd` shim and edit the **user**
   `PATH` with `[Environment]::SetEnvironmentVariable` (which, unlike `setx`, does not truncate a
   long `PATH`).
-- **`install-node.ps1`** — queries `https://nodejs.org/dist/index.json` for the newest LTS
-  release, picks the right MSI for `x64`/`arm64`, downloads it to `%TEMP%`, installs it with an
-  elevated `msiexec`, and exits non-zero on failure.
 - **Line endings matter for the `.cmd` shim:** it is written with `Set-Content -Encoding ASCII`,
   the self-update re-writes `.cmd`/`.bat` files as CRLF, and `install.ps1`/`run.ps1` normalise
   downloaded files to CRLF. `.gitattributes` keeps `*.cmd`/`*.bat` bytes as committed and checks

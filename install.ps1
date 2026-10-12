@@ -36,7 +36,7 @@ function Write-Info($m) { Write-Host "  $m" }
 function Write-Ok($m)   { Write-Host "  $m" -ForegroundColor Green }
 
 $rawBase = "https://raw.githubusercontent.com/$Repo/$Branch"
-$files   = @('opencode-launcher.ps1', 'opencode-backup.ps1', 'opencode-backup.cmd', 'install-node.ps1')
+$files   = @('opencode-launcher.ps1', 'opencode-backup.ps1', 'opencode-backup.cmd')
 
 Write-Host ''
 Write-Host 'OpenCode Launcher installer' -ForegroundColor Cyan

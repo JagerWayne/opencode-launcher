@@ -19,7 +19,7 @@ $dir    = Join-Path $env:LOCALAPPDATA 'OpenCodeLauncher'
 
 New-Item -ItemType Directory -Path $dir -Force | Out-Null
 
-foreach ($f in @('opencode-launcher.ps1', 'opencode-backup.ps1', 'opencode-backup.cmd', 'install-node.ps1')) {
+foreach ($f in @('opencode-launcher.ps1', 'opencode-backup.ps1', 'opencode-backup.cmd')) {
     $out = Join-Path $dir $f
     try {
         $text = (Invoke-WebRequest -Uri "$raw/$f" -UseBasicParsing).Content
