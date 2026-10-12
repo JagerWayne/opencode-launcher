@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "2.1"
+$LauncherVersion = "2.2"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -208,10 +208,13 @@ function Remove-DirFromUserPath {
 function Write-OcShim {
   if (-not (Test-Path $ShimDir)) { New-Item -ItemType Directory -Path $ShimDir -Force | Out-Null }
   $scriptPath = Join-Path $LauncherDir "opencode-launcher.ps1"
+  # Build the run line first: `,` binds tighter than `+`, so inlining the
+  # concatenation inside @(...) would split it into separate array elements.
+  $runLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' + $scriptPath + '" %*'
   $lines = @(
     '@echo off',
     'rem Launches the OpenCode Launcher. Managed by opencode-launcher.ps1.',
-    'powershell -NoProfile -ExecutionPolicy Bypass -File "' + $scriptPath + '" %*'
+    $runLine
   )
   Set-Content -Path $ShimPath -Value $lines -Encoding ASCII
 }

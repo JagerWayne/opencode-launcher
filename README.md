@@ -1,6 +1,6 @@
 # OpenCode Launcher
 
-**Version 2.1 — By Wayne Scicluna**
+**Version 2.2 — By Wayne Scicluna**
 
 A colourful, keypress-driven Windows menu for [OpenCode](https://opencode.ai). Instead of
 remembering subcommands and flags, you get one window with a key for each common action —
@@ -14,7 +14,7 @@ for the launcher itself. Colours are used throughout (title bar, section headers
 line, and green/red indicators), and it falls back gracefully if the console is tiny or plain.
 
 ```
-   OpenCode Launcher  by Wayne Scicluna                     v2.1
+   OpenCode Launcher  by Wayne Scicluna                     v2.2
 
    OpenCode opencode v2.0.27     Node v24.17.0
    Folder C:\Users\You
@@ -466,4 +466,4 @@ A quick tour for anyone wanting to read or extend the launcher:
 
 MIT — see [LICENSE](LICENSE).
 
-Version 2.1 — By Wayne Scicluna.
+Version 2.2 — By Wayne Scicluna.
