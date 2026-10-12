@@ -40,6 +40,7 @@ for setting up Node.js on machines that don't have `winget`.
 - [Requirements](#requirements)
 - [Files in this repo](#files-in-this-repo)
 - [Getting started](#getting-started)
+  - [Install with one PowerShell command](#install-with-one-powershell-command)
 - [Launch it by typing `oc`](#launch-it-by-typing-oc)
 - [Menu options explained](#menu-options-explained)
   - [[R] Run OpenCode (current folder)](#r-run-opencode-current-folder)
@@ -79,6 +80,7 @@ No Python, no Node dependency for the launcher itself — it's just batch.
 | --- | --- |
 | `opencode-launcher.cmd` | The launcher. All menus and actions live here. |
 | `install-node.ps1` | Fallback Node.js LTS installer, used only when `winget` is unavailable. |
+| `install.ps1` | One-line installer that downloads the launcher and creates the `oc` shortcut. |
 | `README.md` | This document. |
 | `LICENSE` | MIT licence. |
 
@@ -91,6 +93,32 @@ The launcher also creates one file at runtime:
 ---
 
 ## Getting started
+
+### Install with one PowerShell command
+
+On any Windows machine, open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/JagerWayne/opencode-launcher/main/install.ps1 | iex
+```
+
+That downloads the launcher to `%LOCALAPPDATA%\OpenCodeLauncher`, creates the `oc` shortcut,
+and puts it on your `PATH`. Then just type `oc` in any command window. No git or clone needed.
+
+`install.ps1` accepts a few options if you run it as a file:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `-InstallDir <path>` | `%LOCALAPPDATA%\OpenCodeLauncher` | Where the launcher files are downloaded. |
+| `-BinDir <path>` | `%USERPROFILE%\.local\bin` | Where the `oc.cmd` shortcut is written. |
+| `-NoPath` | off | Don't modify the user `PATH`. |
+| `-Launch` | off | Open the launcher when the install finishes. |
+
+```powershell
+./install.ps1 -InstallDir "C:\tools\opencode-launcher" -Launch
+```
+
+### Or use the repo directly
 
 1. Download / clone this repo to any folder, e.g. `C:\coding\OpencodeEnhancer`.
 2. Double-click `opencode-launcher.cmd` (or run it from a terminal).
