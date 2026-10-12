@@ -1,6 +1,6 @@
 # OpenCode Launcher
 
-**Version 2.2 — By Wayne Scicluna**
+**Version 2.3 — By Wayne Scicluna**
 
 A colourful, keypress-driven Windows menu for [OpenCode](https://opencode.ai). Instead of
 remembering subcommands and flags, you get one window with a key for each common action —
@@ -14,7 +14,7 @@ for the launcher itself. Colours are used throughout (title bar, section headers
 line, and green/red indicators), and it falls back gracefully if the console is tiny or plain.
 
 ```
-   OpenCode Launcher  by Wayne Scicluna                     v2.2
+   OpenCode Launcher  by Wayne Scicluna                     v2.3
 
    OpenCode opencode v2.0.27     Node v24.17.0
    Folder C:\Users\You
@@ -424,9 +424,11 @@ A quick tour for anyone wanting to read or extend the launcher:
   Escape key, otherwise the uppercase character. This is what gives single-keypress navigation
   and an `ESC`-to-go-back that batch `choice` can't do.
 - **Drawing** — `Write-Title`, `Write-Section`, `Write-Item` and `Write-StatusLine` render the
-  theme using `Write-Host -ForegroundColor` / `-BackgroundColor`. The title bar and section
-  labels are drawn as coloured bars (background colour), which render correctly on any console
-  font — no box-drawing glyphs that can break on the raster font.
+  theme using `Write-Host -ForegroundColor` / `-BackgroundColor`. `Write-Title` also clears the
+  console first, so every screen (main menu, Manage, Restore, and action screens) starts on a
+  fresh screen. The title bar and section labels are drawn as coloured bars (background colour),
+  which render correctly on any console font — no box-drawing glyphs that can break on the
+  raster font.
 - **`Get-Status` / `Refresh-Status`** — the status line, cached at startup and refreshed after
   update/install/uninstall.
 - **`Invoke-OpenCode`** — checks OpenCode is present, warns and returns to the menu if not,
@@ -466,4 +468,4 @@ A quick tour for anyone wanting to read or extend the launcher:
 
 MIT — see [LICENSE](LICENSE).
 
-Version 2.2 — By Wayne Scicluna.
+Version 2.3 — By Wayne Scicluna.

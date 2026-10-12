@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "2.2"
+$LauncherVersion = "2.3"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -92,6 +92,8 @@ function Refresh-Status { $script:Status = Get-Status }
 
 function Write-Title {
   param([string]$Title, [string]$Author = "")
+  # Start every screen on a clean console.
+  try { Clear-Host } catch {}
   $left = "   " + $Title
   if ($Author) { $left = $left + "  by " + $Author }
   $right = "v$LauncherVersion"
@@ -522,7 +524,6 @@ function Show-ManageMenu {
 
 function Show-MainMenu {
   while ($true) {
-    try { Clear-Host } catch {}
     Write-Title "OpenCode Launcher" -Author $LauncherAuthor
     Write-StatusLine
     Write-Host "   Folder " -NoNewline -ForegroundColor $C_Hint
