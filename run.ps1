@@ -19,11 +19,11 @@ $dir    = Join-Path $env:LOCALAPPDATA 'OpenCodeLauncher'
 
 New-Item -ItemType Directory -Path $dir -Force | Out-Null
 
-foreach ($f in @('opencode-launcher.cmd', 'install-node.ps1')) {
+foreach ($f in @('opencode-launcher.ps1', 'opencode-backup.ps1', 'opencode-backup.cmd', 'install-node.ps1')) {
     $out = Join-Path $dir $f
     try {
         $text = (Invoke-WebRequest -Uri "$raw/$f" -UseBasicParsing).Content
-        # Ensure CRLF: raw endpoints may serve LF-only, which breaks .cmd labels.
+        # Ensure CRLF: raw endpoints may serve LF-only, and .cmd files need CRLF.
         $text = ($text -replace "`r`n", "`n") -replace "`n", "`r`n"
         [IO.File]::WriteAllText($out, $text, (New-Object Text.UTF8Encoding($false)))
     } catch {
@@ -36,4 +36,4 @@ foreach ($f in @('opencode-launcher.cmd', 'install-node.ps1')) {
     }
 }
 
-& (Join-Path $dir 'opencode-launcher.cmd')
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir 'opencode-launcher.ps1')

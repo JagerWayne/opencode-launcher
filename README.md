@@ -1,44 +1,38 @@
 # OpenCode Launcher
 
-**Version 1.0 — By Wayne Scicluna**
+**Version 2.0 — By Wayne Scicluna**
 
-A tiny, dependency-free Windows launcher for [OpenCode](https://opencode.ai) that turns the
-raw `opencode` CLI into a friendly menu. Instead of remembering subcommands and flags, you
-get one window with a keypress for each common action — run, resume, install, update, serve,
-and more.
+A colourful, keypress-driven Windows menu for [OpenCode](https://opencode.ai). Instead of
+remembering subcommands and flags, you get one window with a key for each common action —
+run, resume, run-in-a-folder, web server, update, install/repair, uninstall, and **backup /
+restore** of your config, API keys and sessions.
 
-It is written as a plain batch file (`opencode-launcher.cmd`) so it works on any Windows
-machine with no runtime to install. A companion PowerShell script is used only as a fallback
-for setting up Node.js on machines that don't have `winget`.
+It is a single PowerShell script (`opencode-launcher.ps1`) that runs on the **Windows
+PowerShell** that already ships with Windows 10/11 — no Node, Python or extra runtime needed
+for the launcher itself. Colours are used throughout (title bar, section headers, a live status
+line, and green/red indicators), and it falls back gracefully if the console is tiny or plain.
 
 ```
-==========================================
-            OpenCode Launcher
-         Version 1.0  -  By Wayne Scicluna
-==========================================
+   OPENCODE LAUNCHER                                        v2.0
 
-   OpenCode: installed    Node/npm: found
+   OpenCode opencode v2.0.27     Node v24.17.0
+   Folder C:\Users\You
 
-   RUN
-     [R]  Run OpenCode (current folder)
-     [C]  Continue last session  (--continue)
-     [D]  Run in a specific folder...
-     [S]  Launch v2 web / server   (opencode serve)
+    RUN  ----------------------------------------------
+   [R] Run OpenCode                      this folder
+   [C] Continue last session             --continue
+   [F] Run in a specific folder          prompt for a path
+   [S] Launch Web Server                 opencode web
 
-   MANAGE OPENCODE
-     [U]  Update OpenCode
-     [T]  Check for updates before each run:  OFF
-     [I]  Install / repair OpenCode  (installs Node.js if needed)
-     [X]  Uninstall OpenCode
+    MANAGE  -------------------------------------------
+   [M] Manage                            update, backup, restore...
 
-   LAUNCHER
-     [O]  Set up the "oc" command shortcut
-     [M]  Uninstall this launcher
-
-     [Q]  Quit
-
- Select an option [R, C, D, S, U, T, I, X, O, M, Q]:
+    EXIT  ---------------------------------------------
+   [Q] Quit
 ```
+
+> The title bar and the `RUN` / `MANAGE` / `EXIT` section labels are drawn as coloured bars,
+> the keys are yellow, and the status line is green when things are healthy and red when not.
 
 > **Quick install (PowerShell):** `irm https://lc.cx/opencode | iex`
 
@@ -53,19 +47,23 @@ for setting up Node.js on machines that don't have `winget`.
   - [Run it directly (no install)](#run-it-directly-no-install)
 - [Launch it by typing `oc`](#launch-it-by-typing-oc)
 - [Menu options explained](#menu-options-explained)
-  - [[R] Run OpenCode (current folder)](#r-run-opencode-current-folder)
-  - [[C] Continue last session](#c-continue-last-session)
-  - [[D] Run in a specific folder](#d-run-in-a-specific-folder)
-  - [[S] Launch v2 web / server](#s-launch-v2-web--server)
-  - [[U] Update OpenCode](#u-update-opencode)
-  - [[T] Check for updates before each run](#t-check-for-updates-before-each-run)
-  - [[I] Install / repair OpenCode](#i-install--repair-opencode)
-  - [[O] Set up the "oc" command shortcut](#o-set-up-the-oc-command-shortcut)
-  - [[X] Uninstall OpenCode](#x-uninstall-opencode)
-  - [[M] Uninstall this launcher](#m-uninstall-this-launcher)
+  - [Main menu](#main-menu)
+    - [[R] Run OpenCode](#r-run-opencode)
+    - [[C] Continue last session](#c-continue-last-session)
+    - [[F] Run in a specific folder](#f-run-in-a-specific-folder)
+    - [[S] Launch Web Server](#s-launch-web-server)
+    - [[M] Manage](#m-manage)
+  - [Manage menu](#manage-menu)
+    - [[U] Update OpenCode](#u-update-opencode)
+    - [[I] Install / repair OpenCode](#i-install--repair-opencode)
+    - [[X] Uninstall OpenCode](#x-uninstall-opencode)
+    - [[B] Backup](#b-backup)
+    - [[R] Restore](#r-restore)
+    - [[O] Set up the "oc" command shortcut](#o-set-up-the-oc-command-shortcut)
+    - [[L] Uninstall Launcher](#l-uninstall-launcher)
   - [[Q] Quit](#q-quit)
+- [Backup and restore](#backup-and-restore)
 - [The status line](#the-status-line)
-- [Configuration file](#configuration-file)
 - [How the internals work](#how-the-internals-work)
 - [Customising](#customising)
 - [License](#license)
@@ -74,14 +72,16 @@ for setting up Node.js on machines that don't have `winget`.
 
 ## Requirements
 
-- **Windows** (cmd; also works when launched from PowerShell or Windows Terminal).
-- **Node.js / npm** to install and run OpenCode — but you only need this *if* you don't
-  already have OpenCode. The launcher's **[I] Install** option can install Node.js for you.
+- **Windows** with **Windows PowerShell 5.1** (included in Windows 10/11). The launcher is a
+  `.ps1` file; the `oc.cmd` shim runs it with `powershell -NoProfile -ExecutionPolicy Bypass`.
+- **Node.js / npm** to install and run OpenCode — but only if you don't already have OpenCode.
+  The launcher's **[I] Install** option can install Node.js for you.
 - **`winget`** is used to install Node.js automatically when it's missing. If `winget` is not
   available, the bundled `install-node.ps1` downloads the official Node.js LTS installer
   instead.
 
-No Python, no Node dependency for the launcher itself — it's just batch.
+No Python and no Node dependency for the launcher itself — just the PowerShell that ships with
+Windows.
 
 ---
 
@@ -89,18 +89,17 @@ No Python, no Node dependency for the launcher itself — it's just batch.
 
 | File | Description |
 | --- | --- |
-| `opencode-launcher.cmd` | The launcher. All menus and actions live here. |
+| `opencode-launcher.ps1` | The launcher. All menus, colours and actions live here. |
+| `opencode-backup.ps1` | Backup/restore of opencode config, API keys and sessions. |
+| `opencode-backup.cmd` | Thin batch wrapper so you can run the backup from a terminal by name. |
 | `install-node.ps1` | Fallback Node.js LTS installer, used only when `winget` is unavailable. |
 | `install.ps1` | One-line installer that downloads the launcher and creates the `oc` shortcut. |
 | `run.ps1` | One-line runner that downloads and opens the menu without installing anything. |
 | `README.md` | This document. |
 | `LICENSE` | MIT licence. |
 
-The launcher also creates one file at runtime:
-
-| File | Description |
-| --- | --- |
-| `opencode-launcher.cfg` | Stores your remembered settings (currently the "check for updates before each run" toggle). Created on first toggle; safe to delete. |
+The backup feature writes timestamped archives under
+`%USERPROFILE%\.config\opencode\backup\archives` (never inside this repo).
 
 ---
 
@@ -136,9 +135,6 @@ It downloads the launcher (cached in `%LOCALAPPDATA%\OpenCodeLauncher`) and open
 It does **not** create a shortcut or change your `PATH`. If you're offline it falls back to the
 cached copy from a previous run.
 
-> The `lc.cx/opencode` short link points at the **installer** (`install.ps1`). If you'd rather
-> it ran the menu without installing, point the short link at `run.ps1` instead.
-
 `install.ps1` accepts a few options if you run it as a file:
 
 | Option | Default | Meaning |
@@ -154,60 +150,68 @@ cached copy from a previous run.
 
 ### Or use the repo directly
 
-1. Download / clone this repo to any folder, e.g. `C:\coding\OpencodeEnhancer`.
-2. Double-click `opencode-launcher.cmd` (or run it from a terminal).
+1. Download / clone this repo to any folder, e.g. `C:\coding\OpenCodeLauncher`.
+2. Run `opencode-launcher.ps1` (right-click → *Run with PowerShell*), or from a terminal:
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\opencode-launcher.ps1
+   ```
 3. If OpenCode isn't installed yet, press **I** and let it set everything up.
 4. Press **O** to create the `oc` shortcut so you can launch it by typing `oc`.
 
-You can also make a desktop shortcut to `opencode-launcher.cmd` and pin it to the Start menu
-or taskbar. Because everything is relative to the script's own folder (`%~dp0`), you can move
-the folder anywhere you like — just re-run **O** if you move it after creating the `oc` shim.
+You can also make a desktop shortcut to `opencode-launcher.ps1` and pin it to the Start menu or
+taskbar. Because everything is relative to the script's own folder (`$PSScriptRoot`), you can
+move the folder anywhere you like — just re-run **O** if you move it after creating the `oc`
+shim.
 
 ---
 
 ## Launch it by typing `oc`
 
-Option **[O]** creates a one-line shim (`oc.cmd`) that calls the launcher, and makes sure its
-folder is on your user `PATH`. After that, typing:
+Option **[O]** creates a tiny shim (`oc.cmd`) that calls the launcher, and makes sure its folder
+is on your user `PATH`. After that, typing:
 
 ```cmd
 oc
 ```
 
-in any command window opens the launcher menu. It prefers to drop the shim in
-`%USERPROFILE%\.local\bin` (a common personal-scripts folder); if that folder doesn't exist it
-puts the shim next to the launcher and adds *that* folder to `PATH` instead.
+in any command window opens the launcher menu. The shim it writes is:
 
-A newly added `PATH` entry takes effect in command windows opened **after** the change —
-already-open windows keep their old `PATH` until restarted.
+```bat
+@echo off
+rem Launches the OpenCode Launcher. Managed by opencode-launcher.ps1.
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\opencode-launcher.ps1" %*
+```
+
+It drops the shim in `%USERPROFILE%\.local\bin` (a common personal-scripts folder) and creates
+that folder if needed. A newly added `PATH` entry takes effect in command windows opened
+**after** the change — already-open windows keep their old `PATH` until restarted.
 
 ---
 
 ## Menu options explained
 
-The menu is grouped into three categories — **RUN**, **MANAGE OPENCODE** and **LAUNCHER** —
-but every entry is a single keypress. Each option below lists the key you press, what it does,
-and the exact OpenCode command it runs.
+The main menu is grouped into **RUN**, **MANAGE** and **EXIT**; **[M]** opens a second menu. Every
+entry is a single keypress. `ESC` goes back (or quits from the main menu), and every destructive
+action asks you to type `YES` first.
 
-### [R] Run OpenCode (current folder)
+### Main menu
 
-Runs OpenCode in the folder the launcher lives in.
+#### [R] Run OpenCode
+
+Runs OpenCode in the folder the launcher was started from.
 
 - Under the hood: `opencode`
 - OpenCode's positional argument is a directory, so with no argument it uses the current
-  working directory (the launcher's folder).
-- When it checks for updates first (see **[T]**), that check runs before OpenCode starts.
-- When you exit OpenCode you are returned to the menu, not dumped back to the prompt.
+  working directory. When you exit OpenCode you return to the menu, not the prompt.
 
-### [C] Continue last session
+#### [C] Continue last session
 
 Resumes your most recent OpenCode session.
 
 - Under the hood: `opencode --continue`
 - Handy when you close the terminal and want to jump straight back into what you were doing.
-- Also runs the update check first if enabled, then returns to the menu on exit.
 
-### [D] Run in a specific folder
+#### [F] Run in a specific folder
 
 Starts OpenCode in a folder you choose, without moving the launcher.
 
@@ -216,113 +220,97 @@ Starts OpenCode in a folder you choose, without moving the launcher.
 - Press **Enter** on an empty prompt to cancel.
 - Validates the folder exists; if not, it prints `Folder not found: <path>` and returns to the
   menu instead of launching with a bad path.
-- Under the hood: `opencode "<folder>"` (the directory is passed as OpenCode's positional
-  argument).
+- Under the hood: `opencode "<folder>"`.
 
-### [S] Launch v2 web / server
+#### [S] Launch Web Server
 
-Starts OpenCode's built-in server so you can use the web/API interface.
+Starts OpenCode's built-in web/server interface.
 
-- Under the hood: `opencode serve`
-- It opens in a **separate window** (`start ... cmd /k opencode serve`) so the launcher stays
-  usable and you can start/stop the server independently.
-- The server window prints the URL to open in your browser.
-- Close that window (or press **Ctrl+C** in it) to stop the server. The launcher does **not**
-  run the update check before this, since it isn't an interactive run.
+- Under the hood: `opencode web`
+- It opens in a **separate window** so the launcher stays usable and you can start/stop the
+  server independently.
+- The server window prints the URL to open in your browser. Close that window (or press
+  **Ctrl+C** in it) to stop it.
 
-### [U] Update OpenCode
+#### [M] Manage
+
+Opens the **Manage** submenu (see below). `ESC` returns to the main menu.
+
+### Manage menu
+
+```
+   OPENCODE ------------------------------------------
+  [U] Update OpenCode                   opencode upgrade
+  [I] Install / Repair OpenCode         npm install -g
+  [X] Uninstall OpenCode                keeps config + keys
+
+   DATA ----------------------------------------------
+  [B] Backup                            config, keys, launcher
+  [R] Restore                           pick a backup
+
+   LAUNCHER ------------------------------------------
+  [O] Set up the "OC" shortcut
+  [L] Uninstall Launcher
+
+  [ESC] Back
+```
+
+#### [U] Update OpenCode
 
 Updates OpenCode to the latest version using its own updater.
 
 - Under the hood: `opencode upgrade`
 - OpenCode detects how it was installed (npm, bun, curl, brew, …) and updates accordingly.
-- Runs in the launcher window and returns to the menu when done.
 - Requires OpenCode to be installed; otherwise it tells you to use **[I]** first.
 
-### [T] Check for updates before each run
-
-Toggles a remembered on/off setting. When **ON**, every run action (**R**, **C**, **D**) first
-checks whether a newer OpenCode exists and offers to update before launching.
-
-The check itself:
-
-- Reads your installed version with `opencode --version`.
-- Reads the latest published version with `npm view @opencode/cli version`.
-- If they match: prints `You are up to date (vX.Y.Z).` and continues.
-- If a newer version exists: prints `A newer OpenCode is available: vOld -> vNew` and asks
-  `Update now before running? [Y, N]`. **Y** runs `opencode upgrade`; **N** skips and runs.
-- If npm is offline or unreachable: it says so and simply continues — it never blocks you.
-
-The setting is stored in `opencode-launcher.cfg` next to the script, so it persists between
-launches. It only affects the interactive runs (R/C/D); **[S]** and **[U]** are unaffected.
-Updating requires network access, so on a disconnected machine the check is skipped gracefully.
-
-### [I] Install / repair OpenCode
+#### [I] Install / repair OpenCode
 
 Installs OpenCode, ensuring the prerequisites are present first.
 
-1. **Detects prerequisites.** It checks for `npm`. If `npm` is present, it skips straight to
-   step 3.
-2. **Installs Node.js if needed.** If `npm` is missing it installs Node.js LTS:
-   - via `winget`: `winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements`, then adds `%ProgramFiles%\nodejs` to `PATH` for the current session, **or**
-   - if `winget` is unavailable, by running the bundled `install-node.ps1`, which downloads the
-     latest LTS MSI from nodejs.org and installs it (Windows will prompt for administrator
-     permission via UAC).
-   - If Node.js still isn't available afterwards, it tells you to install it from
-     <https://nodejs.org/> and stops.
-3. **Installs OpenCode.** Runs `npm install -g @opencode/cli`. If OpenCode is already present
-   it prints `reinstalling / repairing` and simply refreshes the install.
+1. **Detects prerequisites.** If `npm` is present it skips straight to step 3.
+2. **Installs Node.js if needed** — via `winget install --id OpenJS.NodeJS.LTS`, or (if
+   `winget` is unavailable) the bundled `install-node.ps1`, which downloads the latest LTS MSI
+   from nodejs.org and installs it (Windows will prompt for administrator permission via UAC).
+   If Node.js still isn't available afterwards, it tells you to install it from
+   <https://nodejs.org/> and stops.
+3. **Installs OpenCode.** Runs `npm install -g @opencode/cli@latest`. If OpenCode is already
+   present it simply refreshes the install.
 
-> **Note on npm 11+:** recent npm versions warn that `@opencode/cli` has a `postinstall`
-> script not covered by the new `allow-scripts` policy. The install still completes and
-> OpenCode works. If you ever want to explicitly allow it, run
-> `npm install -g --allow-scripts=@opencode/cli`.
+> **Note on npm 11+:** recent npm versions warn that `@opencode/cli` has a `postinstall` script
+> not covered by the new `allow-scripts` policy. The install still completes and OpenCode works.
 
-### [O] Set up the "oc" command shortcut
+#### [X] Uninstall OpenCode
 
-Creates a small `oc.cmd` shim and puts it on your `PATH` so you can open the launcher by
-typing `oc`.
+Removes OpenCode while keeping your sessions, configuration, API keys and state.
 
-- Chooses a location: `%USERPROFILE%\.local\bin` if it exists, otherwise the launcher's own
-  folder.
-- Writes a shim that calls the launcher by its absolute path:
-  ```bat
-  @echo off
-  rem Launches the OpenCode Launcher menu. Created by opencode-launcher.cmd.
-  call "C:\path\to\opencode-launcher.cmd" %*
-  ```
-- Ensures the shim's folder is on your **user** `PATH` (using PowerShell's
-  `[Environment]::SetEnvironmentVariable`, which — unlike `setx` — does not truncate a long
-  `PATH`).
-- If an `oc.cmd` already exists there it asks `Overwrite it? [Y, N]` before replacing it.
+- Asks `Type YES to uninstall` and only proceeds on an explicit **YES**.
+- If the `opencode` command is available it runs `opencode uninstall`, then falls back to
+  `npm uninstall -g @opencode/cli`.
+- Back up first with **[B]** if you want a safe copy.
 
-Run this again any time you move the launcher folder (so the shim points at the new path) or
-on a new machine.
+#### [B] Backup
 
-### [X] Uninstall OpenCode
+Backs up your opencode setup into a timestamped archive. See
+[Backup and restore](#backup-and-restore).
 
-Removes OpenCode while keeping your sessions, configuration and state.
+#### [R] Restore
 
-- Asks `Proceed with uninstall? [Y, N]` and only proceeds on an explicit **Y**. (The prompt is
-  hardened so an unexpected keypress can never trigger removal.)
-- If the `opencode` command is available, it runs `opencode uninstall --force` (OpenCode's own
-  uninstaller detects the install method).
-- Otherwise it falls back to `npm uninstall -g @opencode/cli`.
-- Your session data, config and state are preserved — only the program is removed.
+Lists your backups as a numbered pick-list (newest first, with size and date). Press the number
+to choose one, then type `YES` to confirm. `ESC` goes back.
 
-### [M] Uninstall this launcher
+#### [O] Set up the "oc" command shortcut
 
-Removes the launcher itself — the `oc` shortcut and the launcher files — without touching
-OpenCode.
+Creates the `oc.cmd` shim (see [Launch it by typing `oc`](#launch-it-by-typing-oc)) and ensures
+`%USERPROFILE%\.local\bin` is on your user `PATH`. Run it again any time you move the launcher
+folder or on a new machine.
 
-- Asks `Proceed? [Y, N]` and only proceeds on an explicit **Y**.
-- Removes the `oc` shortcut (from `%USERPROFILE%\.local\bin` and the launcher folder) and drops
-  the launcher's own folder from your user `PATH` if it was added there.
-- If the launcher folder is a **source checkout** (it contains a `.git` folder), it keeps the
-  files and just removes the shortcut, so you never accidentally delete your clone.
-- Otherwise it deletes the launcher files and the folder using a small cleanup helper that runs
-  after the launcher exits.
-- OpenCode itself is **not** removed — use **[X]** for that.
+#### [L] Uninstall Launcher
+
+Removes the `oc` shortcut and the launcher files (`opencode-launcher.ps1`,
+`opencode-backup.ps1`, `opencode-backup.cmd`, `install-node.ps1`) and drops the launcher folder
+from your user `PATH`. OpenCode itself and your config/backups are **not** touched.
+
+- Asks `Type YES to remove the launcher` and only proceeds on an explicit **YES**.
 
 ### [Q] Quit
 
@@ -330,88 +318,108 @@ Closes the launcher window.
 
 ---
 
-## The status line
+## Backup and restore
 
-The line just under the title is refreshed every time the menu is drawn:
+**[B] Backup** writes a timestamped archive to
+`%USERPROFILE%\.config\opencode\backup\archives`. Each archive contains:
 
+| Item | What |
+| --- | --- |
+| `config/` | `%USERPROFILE%\.config\opencode` — `opencode.jsonc`/`opencode.json`, custom commands, agents, skills, plugins, and the launcher (minus `node_modules` and the backups themselves). |
+| `auth.json` | `%USERPROFILE%\.local\share\opencode\auth.json` — your provider **API keys**. |
+| `sessions/` | `opencode.db` (snapshotted via SQLite's online backup when `sqlite3` is available) plus the `storage` and `snapshot` folders. |
+| `env.json` | User environment variables whose name looks like a key (`FAL_KEY`, `*_API_KEY`, `*_TOKEN`, `*_SECRET`). |
+| `manifest.json` | A summary (host, time, what was included) with no secret values. |
+
+Restore puts the config back, restores `auth.json`, restores the session database and state, and
+re-sets the environment variables. **Restart opencode (and open a new terminal) after a restore.**
+
+The same script can be driven from a terminal:
+
+```powershell
+# backup
+.\opencode-backup.ps1 -Backup
+# or, via the wrapper
+opencode-backup.cmd backup
+
+# list
+opencode-backup.cmd list
+
+# restore newest
+opencode-backup.cmd restore
+# restore a specific archive
+opencode-backup.cmd restore "C:\...\opencode-backup-20260101-120000.zip"
 ```
-   OpenCode: installed    Node/npm: found
+
+The archives contain your **API keys in plain text**. Keep them somewhere private, or encrypt
+them — pass `-Password` on backup and restore:
+
+```powershell
+opencode-backup.cmd backup -Password "my secret"
+opencode-backup.cmd restore "C:\...\opencode-backup-20260101-120000.zip.enc" -Password "my secret"
 ```
-
-- **OpenCode** — `installed` or `NOT installed`, based on whether `opencode` is on your `PATH`.
-- **Node/npm** — `found` or `missing`, based on whether `npm` is on your `PATH`.
-
-This lets you see at a glance whether you need to run **[I]** first. If OpenCode isn't
-installed, the run/update actions print a reminder to choose **[I]** instead of failing.
 
 ---
 
-## Configuration file
+## The status line
 
-Settings are stored in `opencode-launcher.cfg`, created next to the launcher the first time you
-toggle a setting:
+The line just under the title is refreshed every time a menu is drawn:
 
-```ini
-autocheck=0
+```
+   OpenCode opencode v2.0.27     Node v24.17.0
 ```
 
-| Key | Values | Meaning |
-| --- | --- | --- |
-| `autocheck` | `0` / `1` | `1` = check for updates before each run (**T**); `0` = off. |
+- **OpenCode** — the installed version (green) or `not installed` (red).
+- **Node** — the Node/npm version (green) or `missing` (red).
 
-You can edit it by hand or delete it to reset to defaults (`autocheck=0`).
+This lets you see at a glance whether you need to run **[I]** first. If OpenCode isn't installed,
+the run/update actions print a reminder to choose **[I]** instead of failing.
 
 ---
 
 ## How the internals work
 
-A quick tour for anyone wanting to read or extend the script:
+A quick tour for anyone wanting to read or extend the launcher:
 
-- **`setlocal EnableExtensions`** — enables extended batch syntax (`%~dp0`, `for /f`, etc.)
-  and scopes any variables the script sets.
-- **`%~dp0`** — the drive + path of the script, with a trailing backslash. Everything
-  (config path, fallback script path, the `oc` shim target) is resolved relative to this, which
-  is why the folder is relocatable.
-- **`:menu`** — clears the screen, calls `:detect`, renders the list, then waits for a single
-  keypress.
-- **`choice /c RCDSUTIXOMQ`** — waits for one of the listed keys. `choice` sets `ERRORLEVEL` to
-  the **1-based position** of the pressed key in the list, so the script dispatches with a chain
-  of `if errorlevel N goto ...` checks, **highest number first** (batch evaluates `if errorlevel`
-  as "greater than or equal to"). Any unexpected value falls through to `goto :menu`, so a stray
-  key can never trigger an action. The keys are displayed in three categories — RUN, MANAGE
-  OPENCODE and LAUNCHER — but they are a single flat key list to `choice`.
-- **`:detect`** — sets `hasopencode` and `hasnpm` using `where ... >nul 2>&1` (output
-  suppressed) and `&&`.
-- **`:needoc`** — guard that warns and returns to the menu if OpenCode isn't installed; called
-  by every action that needs the CLI.
-- **`:installnode`** — prefers `winget`; falls back to running `install-node.ps1`; otherwise
-  advises a manual install.
-- **`:prerun` / `:checkupdate`** — the optional pre-run update check (see **[T]**). Version
-  strings are read with `for /f` over the command output, and compared with `if /i "%cur%"=="%latest%"`.
-- **Yes/No prompts** — each one stores the result as `set "ans=%errorlevel%"` and only acts when
-  `ans` is exactly `1`, so an error/empty response is treated as "No" rather than defaulting to a
-  destructive action.
+- **`param([switch]$NoMenu)`** — lets the script be dot-sourced for tests without drawing the
+  menu.
+- **`$PSScriptRoot`** — the folder the script lives in. Everything (the backup script, the Node
+  fallback, the `oc` shim target) is resolved relative to it, so the folder is relocatable.
+- **`Read-MenuKey`** — reads one key with `[Console]::ReadKey($true)`; returns `ESC` for the
+  Escape key, otherwise the uppercase character. This is what gives single-keypress navigation
+  and an `ESC`-to-go-back that batch `choice` can't do.
+- **Drawing** — `Write-Title`, `Write-Section`, `Write-Item` and `Write-StatusLine` render the
+  theme using `Write-Host -ForegroundColor` / `-BackgroundColor`. The title bar and section
+  labels are drawn as coloured bars (background colour), which render correctly on any console
+  font — no box-drawing glyphs that can break on the raster font.
+- **`Get-Status` / `Refresh-Status`** — the status line, cached at startup and refreshed after
+  update/install/uninstall.
+- **`Invoke-OpenCode`** — checks OpenCode is present, warns and returns to the menu if not,
+  otherwise runs `opencode` (with optional arguments) in the chosen folder and returns to the
+  menu when it exits.
+- **`Show-MainMenu` / `Show-ManageMenu`** — `while ($true)` loops that draw the menu and switch
+  on the key. `ESC` returns; `Q` (main menu only) exits.
+- **`Write-OcShim` / `Add-DirToUserPath`** — write the `oc.cmd` shim and edit the **user**
+  `PATH` with `[Environment]::SetEnvironmentVariable` (which, unlike `setx`, does not truncate a
+  long `PATH`).
 - **`install-node.ps1`** — queries `https://nodejs.org/dist/index.json` for the newest LTS
   release, picks the right MSI for `x64`/`arm64`, downloads it to `%TEMP%`, installs it with an
   elevated `msiexec`, and exits non-zero on failure.
-- **`:uninstallmenu` / `:removeshim`** — removes the `oc` shim(s), then (unless the folder is a
-  git checkout) writes a tiny cleanup script to `%TEMP%` that deletes the launcher files after
-  the launcher process exits, and removes the launcher folder from the user `PATH`.
-- **Line endings matter:** `.cmd` files must use Windows **CRLF** line endings. With LF-only
-  endings Windows can fail to find `goto` labels ("cannot find the batch label specified").
-  `.gitattributes` forces CRLF for `*.cmd`/`*.bat`/`*.ps1` on checkout.
+- **Line endings matter for the `.cmd` shim:** it is written with `Set-Content -Encoding ASCII`,
+  and `install.ps1`/`run.ps1` normalise downloaded files to CRLF. `.gitattributes` keeps `*.cmd`
+  bytes as committed and checks `*.ps1` out as CRLF.
 
 ---
 
 ## Customising
 
-- **Add a menu item:** add a key to the `choice /c ...` string, add an `echo    [X]  ...` line,
-  and add a matching `if errorlevel N goto :label` in the right order (remember the
-  highest-first rule). Then add the label.
-- **Change the default current folder for [R]:** edit the `opencode` line in `:run`, or use
-  **[D]** to pick a folder each time.
-- **Change the update-check source:** the `npm view @opencode/cli version` line in
-  `:checkupdate` can point at any source you trust.
+- **Add a menu item:** add a `Write-Item "X" "Label" "hint"` line and a matching `"X" { ... }`
+  case in the relevant `switch (Read-MenuKey)` block.
+- **Change the theme:** edit the `$C_*` colour variables near the top (title, sections, keys,
+  good/bad/warn).
+- **Change the default current folder for [R]:** edit the `Get-Location` call in `Action-Run`,
+  or use **[F]** to pick a folder each time.
+- **Change the launcher version shown:** edit `$LauncherVersion`.
 
 ---
 
@@ -419,4 +427,4 @@ A quick tour for anyone wanting to read or extend the script:
 
 MIT — see [LICENSE](LICENSE).
 
-Version 1.0 — By Wayne Scicluna.
+Version 2.0 — By Wayne Scicluna.

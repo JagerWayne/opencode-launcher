@@ -36,7 +36,7 @@ function Write-Info($m) { Write-Host "  $m" }
 function Write-Ok($m)   { Write-Host "  $m" -ForegroundColor Green }
 
 $rawBase = "https://raw.githubusercontent.com/$Repo/$Branch"
-$files   = @('opencode-launcher.cmd', 'install-node.ps1')
+$files   = @('opencode-launcher.ps1', 'opencode-backup.ps1', 'opencode-backup.cmd', 'install-node.ps1')
 
 Write-Host ''
 Write-Host 'OpenCode Launcher installer' -ForegroundColor Cyan
@@ -60,19 +60,19 @@ foreach ($f in $files) {
     $out = Join-Path $InstallDir $f
     Write-Info "Downloading $f ..."
     $text = (Invoke-WebRequest -Uri $url -UseBasicParsing).Content
-    # Ensure CRLF: raw endpoints may serve LF-only, which breaks .cmd labels.
+    # Ensure CRLF: raw endpoints may serve LF-only, and .cmd files need CRLF.
     $text = ($text -replace "`r`n", "`n") -replace "`n", "`r`n"
     [IO.File]::WriteAllText($out, $text, (New-Object Text.UTF8Encoding($false)))
 }
 Write-Ok 'Launcher files downloaded.'
 
 # 3. Create the "oc" shim pointing at the launcher.
-$launcher = Join-Path $InstallDir 'opencode-launcher.cmd'
+$launcher = Join-Path $InstallDir 'opencode-launcher.ps1'
 $shim     = Join-Path $BinDir 'oc.cmd'
 $shimBody = @"
 @echo off
-rem Launches the OpenCode Launcher menu. Created by install.ps1.
-call "$launcher" %*
+rem Launches the OpenCode Launcher. Created by install.ps1.
+powershell -NoProfile -ExecutionPolicy Bypass -File "$launcher" %*
 "@
 Set-Content -LiteralPath $shim -Value $shimBody -Encoding ASCII
 Write-Ok "Created shortcut: $shim"
@@ -97,4 +97,6 @@ Write-Host ''
 Write-Host '  Type  oc  in a command window to open the launcher.' -ForegroundColor Cyan
 Write-Host ''
 
-if ($Launch) { & $launcher }
+if ($Launch) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $launcher
+}
