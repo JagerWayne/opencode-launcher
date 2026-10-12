@@ -19,19 +19,28 @@ for setting up Node.js on machines that don't have `winget`.
 
    OpenCode: installed    Node/npm: found
 
-   [R]  Run OpenCode (current folder)
-   [C]  Continue last session  (--continue)
-   [D]  Run in a specific folder...
-   [S]  Launch v2 web / server   (opencode serve)
-   [U]  Update OpenCode
-   [T]  Check for updates before each run:  OFF
-   [I]  Install / repair OpenCode  (installs Node.js if needed)
-   [O]  Set up the "oc" command shortcut
-   [X]  Uninstall OpenCode
-   [Q]  Quit
+   RUN
+     [R]  Run OpenCode (current folder)
+     [C]  Continue last session  (--continue)
+     [D]  Run in a specific folder...
+     [S]  Launch v2 web / server   (opencode serve)
 
- Select an option [R, C, D, S, U, T, I, O, X, Q]:
+   MANAGE OPENCODE
+     [U]  Update OpenCode
+     [T]  Check for updates before each run:  OFF
+     [I]  Install / repair OpenCode  (installs Node.js if needed)
+     [X]  Uninstall OpenCode
+
+   LAUNCHER
+     [O]  Set up the "oc" command shortcut
+     [M]  Uninstall this launcher
+
+     [Q]  Quit
+
+ Select an option [R, C, D, S, U, T, I, X, O, M, Q]:
 ```
+
+> **Quick start (PowerShell):** `irm https://lc.cx/opencode | iex`
 
 ---
 
@@ -53,6 +62,7 @@ for setting up Node.js on machines that don't have `winget`.
   - [[I] Install / repair OpenCode](#i-install--repair-opencode)
   - [[O] Set up the "oc" command shortcut](#o-set-up-the-oc-command-shortcut)
   - [[X] Uninstall OpenCode](#x-uninstall-opencode)
+  - [[M] Uninstall this launcher](#m-uninstall-this-launcher)
   - [[Q] Quit](#q-quit)
 - [The status line](#the-status-line)
 - [Configuration file](#configuration-file)
@@ -101,12 +111,19 @@ The launcher also creates one file at runtime:
 To open the menu right away without installing anything, run this in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/JagerWayne/opencode-launcher/main/run.ps1 | iex
+irm https://lc.cx/opencode | iex
 ```
 
-It downloads the launcher (cached in `%LOCALAPPDATA%\OpenCodeLauncher`) and opens the menu.
-It does **not** create a shortcut or change your `PATH`. If you're offline it falls back to the
-cached copy from a previous run.
+`https://lc.cx/opencode` is a short link to `run.ps1` in this repo. It downloads the launcher
+(cached in `%LOCALAPPDATA%\OpenCodeLauncher`) and opens the menu. It does **not** create a
+shortcut or change your `PATH`. If you're offline it falls back to the cached copy from a
+previous run.
+
+The full URL, if you prefer it or want to see the target:
+
+```powershell
+irm https://raw.githubusercontent.com/JagerWayne/opencode-launcher/main/run.ps1 | iex
+```
 
 ### Install with one PowerShell command
 
@@ -165,8 +182,9 @@ already-open windows keep their old `PATH` until restarted.
 
 ## Menu options explained
 
-Each option below lists the key you press, what it does, and the exact OpenCode command it
-runs.
+The menu is grouped into three categories — **RUN**, **MANAGE OPENCODE** and **LAUNCHER** —
+but every entry is a single keypress. Each option below lists the key you press, what it does,
+and the exact OpenCode command it runs.
 
 ### [R] Run OpenCode (current folder)
 
@@ -289,6 +307,20 @@ Removes OpenCode while keeping your sessions, configuration and state.
 - Otherwise it falls back to `npm uninstall -g @opencode/cli`.
 - Your session data, config and state are preserved — only the program is removed.
 
+### [M] Uninstall this launcher
+
+Removes the launcher itself — the `oc` shortcut and the launcher files — without touching
+OpenCode.
+
+- Asks `Proceed? [Y, N]` and only proceeds on an explicit **Y**.
+- Removes the `oc` shortcut (from `%USERPROFILE%\.local\bin` and the launcher folder) and drops
+  the launcher's own folder from your user `PATH` if it was added there.
+- If the launcher folder is a **source checkout** (it contains a `.git` folder), it keeps the
+  files and just removes the shortcut, so you never accidentally delete your clone.
+- Otherwise it deletes the launcher files and the folder using a small cleanup helper that runs
+  after the launcher exits.
+- OpenCode itself is **not** removed — use **[X]** for that.
+
 ### [Q] Quit
 
 Closes the launcher window.
@@ -339,11 +371,12 @@ A quick tour for anyone wanting to read or extend the script:
   is why the folder is relocatable.
 - **`:menu`** — clears the screen, calls `:detect`, renders the list, then waits for a single
   keypress.
-- **`choice /c RCDSUTIOXQ`** — waits for one of the listed keys. `choice` sets `ERRORLEVEL` to
+- **`choice /c RCDSUTIXOMQ`** — waits for one of the listed keys. `choice` sets `ERRORLEVEL` to
   the **1-based position** of the pressed key in the list, so the script dispatches with a chain
   of `if errorlevel N goto ...` checks, **highest number first** (batch evaluates `if errorlevel`
   as "greater than or equal to"). Any unexpected value falls through to `goto :menu`, so a stray
-  key can never trigger an action.
+  key can never trigger an action. The keys are displayed in three categories — RUN, MANAGE
+  OPENCODE and LAUNCHER — but they are a single flat key list to `choice`.
 - **`:detect`** — sets `hasopencode` and `hasnpm` using `where ... >nul 2>&1` (output
   suppressed) and `&&`.
 - **`:needoc`** — guard that warns and returns to the menu if OpenCode isn't installed; called
@@ -358,6 +391,12 @@ A quick tour for anyone wanting to read or extend the script:
 - **`install-node.ps1`** — queries `https://nodejs.org/dist/index.json` for the newest LTS
   release, picks the right MSI for `x64`/`arm64`, downloads it to `%TEMP%`, installs it with an
   elevated `msiexec`, and exits non-zero on failure.
+- **`:uninstallmenu` / `:removeshim`** — removes the `oc` shim(s), then (unless the folder is a
+  git checkout) writes a tiny cleanup script to `%TEMP%` that deletes the launcher files after
+  the launcher process exits, and removes the launcher folder from the user `PATH`.
+- **Line endings matter:** `.cmd` files must use Windows **CRLF** line endings. With LF-only
+  endings Windows can fail to find `goto` labels ("cannot find the batch label specified").
+  `.gitattributes` forces CRLF for `*.cmd`/`*.bat`/`*.ps1` on checkout.
 
 ---
 

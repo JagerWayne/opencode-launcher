@@ -1,6 +1,9 @@
-# Normalize line endings on commit; check out Windows files as CRLF.
+# Line endings.
+# NOTE: raw.githubusercontent.com serves the committed bytes directly, so .cmd files
+# MUST be stored with CRLF in the repository or Windows batch goto/labels break.
+# (-text disables git's text normalisation for them, keeping the CRLF bytes as committed.)
 * text=auto
-*.cmd text eol=crlf
-*.bat text eol=crlf
+*.cmd -text
+*.bat -text
 *.ps1 text eol=crlf
 *.md  text eol=lf

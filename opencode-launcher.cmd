@@ -14,6 +14,10 @@ rem ---------------------------------------------------------------------------
 set "cfg=%~dp0opencode-launcher.cfg"
 set "psfallback=%~dp0install-node.ps1"
 
+rem The launcher's own folder without a trailing backslash.
+set "ldir=%~dp0"
+if "%ldir:~-1%"=="\" set "ldir=%ldir:~0,-1%"
+
 rem Default: do not auto-check. Load override from config file if present.
 set "autocheck=0"
 if exist "%cfg%" (
@@ -37,21 +41,29 @@ echo ==========================================
 echo.
 echo    OpenCode: %ocstat%    Node/npm: %npmstat%
 echo.
-echo    [R]  Run OpenCode (current folder)
-echo    [C]  Continue last session  (--continue)
-echo    [D]  Run in a specific folder...
-echo    [S]  Launch v2 web / server   (opencode serve)
-echo    [U]  Update OpenCode
-echo    [T]  Check for updates before each run:  %acstate%
-echo    [I]  Install / repair OpenCode  (installs Node.js if needed)
-echo    [O]  Set up the "oc" command shortcut
-echo    [X]  Uninstall OpenCode
-echo    [Q]  Quit
+echo    RUN
+echo      [R]  Run OpenCode (current folder)
+echo      [C]  Continue last session  (--continue)
+echo      [D]  Run in a specific folder...
+echo      [S]  Launch v2 web / server   (opencode serve)
 echo.
-choice /c RCDSUTIOXQ /n /m " Select an option [R, C, D, S, U, T, I, O, X, Q]: "
-if errorlevel 10 goto :quit
-if errorlevel 9 goto :uninstall
-if errorlevel 8 goto :setupoc
+echo    MANAGE OPENCODE
+echo      [U]  Update OpenCode
+echo      [T]  Check for updates before each run:  %acstate%
+echo      [I]  Install / repair OpenCode  (installs Node.js if needed)
+echo      [X]  Uninstall OpenCode
+echo.
+echo    LAUNCHER
+echo      [O]  Set up the "oc" command shortcut
+echo      [M]  Uninstall this launcher
+echo.
+echo      [Q]  Quit
+echo.
+choice /c RCDSUTIXOMQ /n /m " Select an option [R, C, D, S, U, T, I, X, O, M, Q]: "
+if errorlevel 11 goto :quit
+if errorlevel 10 goto :uninstallmenu
+if errorlevel 9 goto :setupoc
+if errorlevel 8 goto :uninstall
 if errorlevel 7 goto :install
 if errorlevel 6 goto :toggle
 if errorlevel 5 goto :update
@@ -178,7 +190,7 @@ echo.
 
 rem Prefer a folder that is already on the PATH; otherwise use this folder.
 set "targetdir=%USERPROFILE%\.local\bin"
-if not exist "%targetdir%\" set "targetdir=%~dp0"
+if not exist "%targetdir%\" set "targetdir=%ldir%"
 if "%targetdir:~-1%"=="\" set "targetdir=%targetdir:~0,-1%"
 set "shim=%targetdir%\oc.cmd"
 
@@ -193,7 +205,7 @@ if exist "%shim%" (
 > "%shim%" (
     echo @echo off
     echo rem Launches the OpenCode Launcher menu. Created by opencode-launcher.cmd.
-    echo call "%~dp0opencode-launcher.cmd" %%*
+    echo call "%ldir%\opencode-launcher.cmd" %%*
 )
 echo.
 echo Created: %shim%
@@ -238,6 +250,56 @@ echo Done. Press any key to return to the menu.
 pause >nul
 goto :menu
 
+:uninstallmenu
+cls
+echo ==========================================
+echo         Uninstall this launcher
+echo ==========================================
+echo.
+echo This removes the "oc" shortcut and the launcher files.
+echo OpenCode itself is NOT removed - use [X] for that.
+echo.
+choice /c YN /n /m " Proceed? [Y, N]: "
+set "ans=%errorlevel%"
+if not "%ans%"=="1" goto :menu
+
+echo.
+echo Removing the "oc" shortcut ...
+call :removeshim "%USERPROFILE%\.local\bin\oc.cmd"
+call :removeshim "%ldir%\oc.cmd"
+
+rem If this is a source checkout (contains .git), keep the files.
+if exist "%ldir%\.git\" (
+    echo.
+    echo This looks like the source folder ^(it contains .git^).
+    echo The "oc" shortcut was removed; the launcher files were kept.
+    echo Delete the folder yourself if you want to remove them.
+    echo.
+    pause
+    goto :menu
+)
+
+rem Drop the launcher's own folder from the user PATH, if it was added there.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d='%ldir%'; $p=[Environment]::GetEnvironmentVariable('Path','User'); if($p -and $p.Split(';') -contains $d){ $o=@(); foreach($x in $p.Split(';')){ if($x -and $x -ne $d){ $o+=$x } }; [Environment]::SetEnvironmentVariable('Path',($o -join ';'),'User'); Write-Host 'Removed launcher folder from PATH.' } else { Write-Host 'Launcher folder was not on PATH.' }"
+
+echo Removing launcher files ...
+rem A separate helper deletes the files after this process exits.
+> "%TEMP%\oc-launcher-cleanup.cmd" (
+    echo @echo off
+    echo ping -n 2 127.0.0.1 ^>nul
+    echo del /f /q "%ldir%\opencode-launcher.cmd" ^>nul 2^>nul
+    echo del /f /q "%ldir%\install-node.ps1" ^>nul 2^>nul
+    echo del /f /q "%ldir%\opencode-launcher.cfg" ^>nul 2^>nul
+    echo rd "%ldir%" 2^>nul
+    echo del /f /q "%%~f0"
+)
+
+echo.
+echo Done. The launcher is being removed - this window will close.
+start "" /min cmd /c "%TEMP%\oc-launcher-cleanup.cmd"
+ping -n 3 127.0.0.1 >nul
+exit /b 0
+
 rem ---------------------------------------------------------------------------
 rem  Helpers
 rem ---------------------------------------------------------------------------
@@ -256,6 +318,13 @@ if not "%hasopencode%"=="1" (
     echo.
     pause
     goto :menu
+)
+goto :eof
+
+:removeshim
+if exist "%~1" (
+    del /f /q "%~1" >nul 2>&1
+    echo   removed %~1
 )
 goto :eof
 

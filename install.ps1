@@ -59,7 +59,10 @@ foreach ($f in $files) {
     $url = "$rawBase/$f"
     $out = Join-Path $InstallDir $f
     Write-Info "Downloading $f ..."
-    Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+    $text = (Invoke-WebRequest -Uri $url -UseBasicParsing).Content
+    # Ensure CRLF: raw endpoints may serve LF-only, which breaks .cmd labels.
+    $text = ($text -replace "`r`n", "`n") -replace "`n", "`r`n"
+    [IO.File]::WriteAllText($out, $text, (New-Object Text.UTF8Encoding($false)))
 }
 Write-Ok 'Launcher files downloaded.'
 
