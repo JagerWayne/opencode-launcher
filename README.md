@@ -40,6 +40,7 @@ for setting up Node.js on machines that don't have `winget`.
 - [Requirements](#requirements)
 - [Files in this repo](#files-in-this-repo)
 - [Getting started](#getting-started)
+  - [Run it directly (no install)](#run-it-directly-no-install)
   - [Install with one PowerShell command](#install-with-one-powershell-command)
 - [Launch it by typing `oc`](#launch-it-by-typing-oc)
 - [Menu options explained](#menu-options-explained)
@@ -81,6 +82,7 @@ No Python, no Node dependency for the launcher itself — it's just batch.
 | `opencode-launcher.cmd` | The launcher. All menus and actions live here. |
 | `install-node.ps1` | Fallback Node.js LTS installer, used only when `winget` is unavailable. |
 | `install.ps1` | One-line installer that downloads the launcher and creates the `oc` shortcut. |
+| `run.ps1` | One-line runner that downloads and opens the menu without installing anything. |
 | `README.md` | This document. |
 | `LICENSE` | MIT licence. |
 
@@ -93,6 +95,18 @@ The launcher also creates one file at runtime:
 ---
 
 ## Getting started
+
+### Run it directly (no install)
+
+To open the menu right away without installing anything, run this in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/JagerWayne/opencode-launcher/main/run.ps1 | iex
+```
+
+It downloads the launcher (cached in `%LOCALAPPDATA%\OpenCodeLauncher`) and opens the menu.
+It does **not** create a shortcut or change your `PATH`. If you're offline it falls back to the
+cached copy from a previous run.
 
 ### Install with one PowerShell command
 
