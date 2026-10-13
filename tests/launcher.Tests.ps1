@@ -167,6 +167,51 @@ Describe "PATH normalisation" {
   }
 }
 
+Describe "Backup preflight (opencode must be closed)" {
+  It "finds no processes for a name that does not exist" {
+    # Deliberately a name nothing matches, so running this test can never
+    # stop the opencode session the suite itself is running inside.
+    Assert-Equal @(Get-OpenCodeProcess -NameFilter 'oc-no-such-process-*').Count 0 'no matches'
+  }
+
+  It "reports success immediately when nothing is running" {
+    $ok = Stop-OpenCodeForBackup -NameFilter 'oc-no-such-process-*' -TimeoutSeconds 2
+    Assert-Equal $ok $true 'nothing to stop'
+  }
+
+  It "returns a real list for the default filter" {
+    # opencode may or may not be running; either answer is valid, but the
+    # function must return a collection and must not throw.
+    $p = @(Get-OpenCodeProcess)
+    foreach ($proc in $p) {
+      Assert-True ($proc.ProcessName -like 'opencode*') "unexpected match $($proc.ProcessName)"
+    }
+  }
+
+  It "stops a matching process and waits for it to go" {
+    # Uses a disposable copy of cmd.exe named so the filter matches it. This
+    # exercises the real detect -> close -> force -> wait path without ever
+    # touching the opencode session the suite is running inside.
+    $dummy = Join-Path $env:TEMP 'opencode-testproc.exe'
+    $dummyProc = $null
+    try {
+      Copy-Item $env:ComSpec $dummy -Force
+      $dummyProc = Start-Process -FilePath $dummy -WindowStyle Hidden -PassThru `
+                             -ArgumentList '/c', 'ping -n 30 127.0.0.1 >nul'
+      Start-Sleep -Milliseconds 800
+
+      Assert-True (@(Get-OpenCodeProcess -NameFilter 'opencode-testproc*').Count -ge 1) 'dummy detected'
+      $ok = Stop-OpenCodeForBackup -NameFilter 'opencode-testproc*' -TimeoutSeconds 15
+      Assert-Equal $ok $true 'stop reported success'
+      Assert-Equal @(Get-OpenCodeProcess -NameFilter 'opencode-testproc*').Count 0 'dummy gone'
+    }
+    finally {
+      if ($dummyProc) { Stop-Process -Id $dummyProc.Id -Force -ErrorAction SilentlyContinue }
+      Remove-Item $dummy -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 Describe "Status cache" {
   It "returns nothing when there is no cache file" {
     Remove-Item $StatusCachePath -Force -ErrorAction SilentlyContinue

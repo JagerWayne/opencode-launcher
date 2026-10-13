@@ -1,6 +1,6 @@
 # OpenCode Launcher
 
-**Version 2.5 — By Wayne Scicluna**
+**Version 2.6 — By Wayne Scicluna**
 
 A colourful, keypress-driven Windows menu for [OpenCode](https://opencode.ai). Instead of
 remembering subcommands and flags, you get one window with a key for each common action —
@@ -14,7 +14,7 @@ for the launcher itself. Colours are used throughout (title bar, section headers
 line, and green/red indicators), and it falls back gracefully if the console is tiny or plain.
 
 ```
-   OpenCode Launcher  by Wayne Scicluna                     v2.5
+   OpenCode Launcher  by Wayne Scicluna                     v2.6
 
    OpenCode opencode v2.0.27     Node v24.17.0
    Folder C:\Users\You
@@ -320,6 +320,14 @@ Removes OpenCode while keeping your sessions, configuration, API keys and state.
 Backs up your opencode setup into a timestamped archive. See
 [Backup and restore](#backup-and-restore).
 
+- **Checks whether opencode is running first.** The session database can only be copied safely
+  while opencode is closed. If it is running, `[B]` explains why, warns that unsaved work in
+  those windows will be lost, and asks `Close opencode and continue? Type YES`. On `YES` it closes
+  opencode, waits for it to exit, and continues with the backup. On anything else it cancels and
+  asks you to quit opencode yourself and press **[B]** again. If opencode won't close, the backup
+  is not started rather than writing one that may not restore.
+- If opencode isn't running, the backup starts straight away with no prompt.
+
 #### [R] Restore from a backup
 
 Lists your backups as a numbered pick-list (newest first, with size and date). Press the number
@@ -384,9 +392,17 @@ How it is copied depends on what is available:
 > **Why it refuses.** Copying the database and its `-wal`/`-shm` journals while another process is
 > writing interleaves database pages and WAL frames from different instants. The result can be
 > rejected by SQLite as malformed, or restore with recent sessions silently missing. An archive
-> that fails to restore is worse than no archive, so the script declines to produce one. **If
-> `[B]` reports that opencode is running, quit opencode (including the window the launcher ran
-> it in) and press `[B]` again.**
+> that fails to restore is worse than no archive, so the script declines to produce one.
+>
+> **From the launcher, `[B]` does this for you.** It checks whether opencode is running first. If
+> it is, it explains why the database has to be closed, warns that unsaved work in those windows
+> will be lost, and asks `Close opencode and continue? Type YES`. On `YES` it closes opencode,
+> waits for the process to actually exit so the file handles are released, and then runs the
+> backup. On anything else it cancels and tells you to quit opencode yourself and press `[B]`
+> again. If opencode somehow refuses to close, nothing is started.
+>
+> Running `opencode-backup.cmd backup` from a terminal has no menu to prompt from, so it still
+> stops with the "close opencode first" message rather than waiting for input.
 
 Whichever path is used, the copy is verified afterwards: the SQLite header is checked for a valid
 magic number and a sane page size, and a bad copy aborts the backup instead of being archived.
@@ -529,4 +545,4 @@ A quick tour for anyone wanting to read or extend the launcher:
 
 MIT — see [LICENSE](LICENSE).
 
-Version 2.5 — By Wayne Scicluna.
+Version 2.6 — By Wayne Scicluna.

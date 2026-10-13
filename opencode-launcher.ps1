@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "2.5"
+$LauncherVersion = "2.6"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -441,12 +441,87 @@ function Manage-Uninstall {
   Pause-Menu
 }
 
+function Get-OpenCodeProcess {
+  # opencode runs as a process named "opencode" (or opencode-<platform>).
+  param([string]$NameFilter = "opencode*")
+  return @(Get-Process -ErrorAction SilentlyContinue |
+           Where-Object { $_.ProcessName -like $NameFilter })
+}
+
+function Stop-OpenCodeForBackup {
+  # Closes any running opencode and waits for it to actually exit, so the
+  # session database's file handles are released before it is copied.
+  # Returns $true when nothing is left running.
+  param([string]$NameFilter = "opencode*", [int]$TimeoutSeconds = 20)
+  $procs = @(Get-OpenCodeProcess -NameFilter $NameFilter)
+  if ($procs.Count -eq 0) { return $true }
+
+  foreach ($p in $procs) {
+    try {
+      # Ask politely first - a console app usually ignores this, but it costs
+      # nothing to try and it lets a GUI build close cleanly.
+      [void]$p.CloseMainWindow()
+    } catch {}
+  }
+  Start-Sleep -Milliseconds 600
+
+  foreach ($p in @(Get-OpenCodeProcess -NameFilter $NameFilter)) {
+    Write-Host "   stopping process $($p.ProcessName) (pid $($p.Id))..." -ForegroundColor $C_Hint
+    try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch {
+      Write-Note "Could not stop pid $($p.Id): $($_.Exception.Message)" $C_Bad
+    }
+  }
+
+  # Wait for the handles to be released rather than assuming an instant exit.
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  while ($sw.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+    if (@(Get-OpenCodeProcess -NameFilter $NameFilter).Count -eq 0) { return $true }
+    Start-Sleep -Milliseconds 250
+  }
+  return (@(Get-OpenCodeProcess -NameFilter $NameFilter).Count -eq 0)
+}
+
 function Manage-Backup {
   Write-Title "Back Up OpenCode"
   if (-not (Test-Path $BackupScript)) {
     Write-Note "Backup script not found: $BackupScript" $C_Bad
     Pause-Menu; return
   }
+
+  # The session database is a live SQLite file with an active write-ahead log.
+  # It is only safe to copy while opencode is closed, so check first and offer
+  # to close it rather than failing after the user has already committed to a
+  # backup.
+  $running = @(Get-OpenCodeProcess)
+  if ($running.Count -gt 0) {
+    $names = ($running | ForEach-Object { $_.ProcessName } | Sort-Object -Unique) -join ", "
+    Write-Host ""
+    Write-Note "opencode is running ($names)." $C_Warn
+    Write-Note "Its session database can only be copied safely once it has" $C_Hint
+    Write-Note "closed, otherwise the archive may not restore." $C_Hint
+    Write-Host ""
+    Write-Note "Any unsaved opencode work in those windows will be lost." $C_Warn
+    Write-Host ""
+    $ans = Read-Host "   Close opencode and continue? Type YES"
+    if ($ans -ne "YES") {
+      Write-Host ""
+      Write-Note "Cancelled. Quit opencode yourself, then press [B] again." $C_Warn
+      Pause-Menu
+      return
+    }
+    Write-Host ""
+    Write-Note "Closing opencode..." $C_Hint
+    if (-not (Stop-OpenCodeForBackup)) {
+      Write-Host ""
+      Write-Note "opencode is still running, so the backup was not started." $C_Bad
+      Write-Note "Close it manually, then press [B] again." $C_Hint
+      Pause-Menu
+      return
+    }
+    Write-Note "opencode closed." $C_Good
+  }
+
+  Write-Host ""
   Write-Note "Saving your config, API keys and sessions..." $C_Hint
   Write-Host ""
   & $BackupScript -Backup
