@@ -212,6 +212,148 @@ Describe "Backup preflight (opencode must be closed)" {
   }
 }
 
+Describe "Projects: names and folders" {
+  It "accepts an ordinary project name" {
+    Assert-Equal (Test-ValidProjectName 'MyGame' $null) $null 'valid name'
+  }
+
+  It "rejects an empty name" {
+    Assert-True ([bool](Test-ValidProjectName '   ' $null)) 'blank rejected'
+  }
+
+  It "rejects characters Windows will not allow in a folder name" {
+    foreach ($bad in @('a/b', 'a\b', 'a:b', 'a*b', 'a?b', 'a|b', 'a<b', 'a>b', 'a"b')) {
+      Assert-True ([bool](Test-ValidProjectName $bad $null)) "'$bad' rejected"
+    }
+  }
+
+  It "rejects a trailing dot" {
+    # Windows silently drops a trailing dot, which would create a folder whose
+    # name never matches what the user typed.
+    Assert-True ([bool](Test-ValidProjectName 'name.' $null)) 'trailing dot rejected'
+  }
+
+  It "tolerates a trailing space by trimming it" {
+    # Callers use the trimmed name, so a stray space becomes the folder the
+    # user meant rather than an error.
+    Assert-Equal (Test-ValidProjectName 'name ' $null) $null 'trailing space accepted'
+    Assert-Equal ('name '.Trim()) 'name' 'trimmed value is what gets created'
+  }
+
+  It "rejects reserved Windows device names" {
+    foreach ($bad in @('CON', 'PRN', 'AUX', 'NUL', 'COM1', 'LPT9', 'con')) {
+      Assert-True ([bool](Test-ValidProjectName $bad $null)) "'$bad' rejected"
+    }
+  }
+
+  It "rejects a name that already exists" {
+    $root = Join-Path $env:TEMP 'oc-proj-test'
+    Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory (Join-Path $root 'Taken') -Force | Out-Null
+    Assert-True ([bool](Test-ValidProjectName 'Taken' $root)) 'duplicate rejected'
+    Assert-Equal (Test-ValidProjectName 'Free' $root) $null 'unused name accepted'
+    Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+  }
+
+  It "lists subfolders only, sorted, and nothing for a missing root" {
+    $root = Join-Path $env:TEMP 'oc-proj-list'
+    Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory $root -Force | Out-Null
+    New-Item -ItemType Directory (Join-Path $root 'Zeta') -Force | Out-Null
+    New-Item -ItemType Directory (Join-Path $root 'Alpha') -Force | Out-Null
+    'not a folder' | Set-Content (Join-Path $root 'a-file.txt')
+    $found = @(Get-ProjectFolder $root)
+    Assert-Equal $found.Count 2 'two folders'
+    Assert-Equal $found[0].Name 'Alpha' 'sorted first'
+    Assert-Equal $found[1].Name 'Zeta' 'sorted second'
+    Assert-Equal @(Get-ProjectFolder (Join-Path $root 'nope')).Count 0 'missing root'
+    Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+Describe "Projects: settings" {
+  It "round-trips the working folder" {
+    $saved = $SettingsPath
+    $SettingsPath = Join-Path $env:TEMP 'oc-settings-test.json'
+    Remove-Item $SettingsPath -Force -ErrorAction SilentlyContinue
+    try {
+      Assert-Equal (Read-Settings).Count 0 'no settings yet'
+      $s = @{}; $s['ProjectsDir'] = 'C:\somewhere'
+      Assert-Equal (Write-Settings $s) $true 'write succeeded'
+      Assert-Equal (Read-Settings)['ProjectsDir'] 'C:\somewhere' 'value round-trips'
+    } finally {
+      $SettingsPath = $saved
+      Remove-Item (Join-Path $env:TEMP 'oc-settings-test.json') -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  It "ignores a corrupt settings file instead of crashing" {
+    $saved = $SettingsPath
+    $SettingsPath = Join-Path $env:TEMP 'oc-settings-bad.json'
+    'not json {{{' | Set-Content $SettingsPath -Encoding ASCII
+    try {
+      Assert-Equal (Read-Settings).Count 0 'corrupt reads as empty'
+    } finally {
+      $SettingsPath = $saved
+      Remove-Item (Join-Path $env:TEMP 'oc-settings-bad.json') -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  It "returns nothing when the working folder no longer exists" {
+    $savedPath = $SettingsPath
+    $SettingsPath = Join-Path $env:TEMP 'oc-settings-missing.json'
+    $s = @{}; $s['ProjectsDir'] = (Join-Path $env:TEMP 'oc-does-not-exist-xyz')
+    Write-Settings $s | Out-Null
+    try {
+      Assert-Equal ([string](Get-ProjectsDir)) '' 'stale path is not used'
+    } finally {
+      $SettingsPath = $savedPath
+      Remove-Item (Join-Path $env:TEMP 'oc-settings-missing.json') -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+Describe "Projects: delete safety" {
+  It "refuses to delete the folder the launcher runs from" {
+    Assert-True ([bool](Test-SafeToDeleteProject $LauncherDir)) 'launcher folder refused'
+  }
+
+  It "refuses to delete a folder that contains the launcher" {
+    # The repo's parent, e.g. C:\coding, which holds C:\coding\OpencodeEnhancer.
+    Assert-True ([bool](Test-SafeToDeleteProject (Split-Path -Parent $LauncherDir))) 'parent refused'
+  }
+
+  It "allows an ordinary project folder" {
+    $root = Join-Path $env:TEMP 'oc-safe-delete'
+    Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory $root -Force | Out-Null
+    Assert-Equal (Test-SafeToDeleteProject $root) $null 'ordinary folder allowed'
+    Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+  }
+
+  It "does not mistake a sibling folder for a parent" {
+    # C:\coding\OpencodeEnhancer must not be refused because of a folder that
+    # merely shares a name prefix.
+    $root = Join-Path $env:TEMP 'oc-prefix-test'
+    Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory (Join-Path $root 'thing') -Force | Out-Null
+    Assert-Equal (Test-SafeToDeleteProject (Join-Path $root 'thing')) $null 'sibling allowed'
+    Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+Describe "Projects: index keys" {
+  It "returns -1 for ESC" {
+    Assert-Equal (Complete-IndexKey 'ESC') -1 'ESC'
+  }
+
+  It "returns -1 for a non-digit key" {
+    foreach ($k in @('X', 'M', ' ')) {
+      Assert-Equal (Complete-IndexKey $k) -1 "'$k' is not an index"
+    }
+  }
+}
+
 Describe "Status cache" {
   It "returns nothing when there is no cache file" {
     Remove-Item $StatusCachePath -Force -ErrorAction SilentlyContinue

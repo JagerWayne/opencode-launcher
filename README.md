@@ -1,6 +1,6 @@
 # OpenCode Launcher
 
-**Version 2.6 — By Wayne Scicluna**
+**Version 2.7 — By Wayne Scicluna**
 
 A colourful, keypress-driven Windows menu for [OpenCode](https://opencode.ai). Instead of
 remembering subcommands and flags, you get one window with a key for each common action —
@@ -14,7 +14,7 @@ for the launcher itself. Colours are used throughout (title bar, section headers
 line, and green/red indicators), and it falls back gracefully if the console is tiny or plain.
 
 ```
-   OpenCode Launcher  by Wayne Scicluna                     v2.6
+   OpenCode Launcher  by Wayne Scicluna                     v2.7
 
    OpenCode opencode v2.0.27     Node v24.17.0
    Folder C:\Users\You
@@ -25,6 +25,10 @@ line, and green/red indicators), and it falls back gracefully if the console is 
    [F] Open a folder...                  choose a project folder
    [S] Open web interface                opencode web
 
+    PROJECTS  ------------------------------------------
+   [P] Pick a project...                 from your working folder
+   [W] Set the working folder...         where projects live
+
     MANAGE  -------------------------------------------
    [M] Manage                            update, back up, restore...
 
@@ -32,8 +36,9 @@ line, and green/red indicators), and it falls back gracefully if the console is 
    [Q] Quit
 ```
 
-> The title bar and the `START` / `MANAGE` / `EXIT` section labels are drawn as coloured bars,
-> the keys are yellow, and the status line is green when things are healthy and red when not.
+> The title bar and the `START` / `PROJECTS` / `MANAGE` / `EXIT` section labels are drawn as
+> coloured bars, the keys are yellow, and the status line is green when things are healthy and red
+> when not.
 
 > **Quick install (PowerShell):** `irm https://lc.cx/opencode | iex`
 
@@ -53,6 +58,12 @@ line, and green/red indicators), and it falls back gracefully if the console is 
     - [[C] Resume last session](#c-resume-last-session)
     - [[F] Open a folder](#f-open-a-folder)
     - [[S] Open web interface](#s-open-web-interface)
+    - [[P] Pick a project](#p-pick-a-project)
+    - [[W] Set the working folder](#w-set-the-working-folder)
+    - [Projects menu](#projects-menu)
+      - [[N] New project folder](#n-new-project-folder)
+      - [[R] Rename a project](#r-rename-a-project)
+      - [[D] Delete a project](#d-delete-a-project)
     - [[M] Manage](#m-manage)
   - [Manage menu](#manage-menu)
     - [[U] Update OpenCode](#u-update-opencode)
@@ -246,9 +257,81 @@ Starts OpenCode's built-in web/server interface.
 - The server window prints the URL to open in your browser. Close that window (or press
   **Ctrl+C** in it) to stop it.
 
+#### [P] Pick a project
+
+Opens the **Projects** menu: every folder inside your Default Working Directory, in one numbered
+list you can load, create, rename and delete from. See [Projects menu](#projects-menu).
+
+#### [W] Set the working folder
+
+Sets the **Default Working Directory** — the single folder that holds all your projects. The
+launcher asks for it the first time you press **[P]**, and you can change it any time with this
+option. See [Projects menu](#projects-menu).
+
 #### [M] Manage
 
 Opens the **Manage** submenu (see below). `ESC` returns to the main menu.
+
+### Projects menu
+
+All your project folders live in one place: the **Default Working Directory**. The launcher doesn't
+keep a separate list — every folder directly inside that directory *is* a project, so you can add
+or remove projects with Explorer and the menu follows along.
+
+The working folder is stored in `%LOCALAPPDATA%\OpenCodeLauncher\settings.json`, so it survives
+moving or re-installing the launcher. The first time you press **[P]** the launcher asks which
+folder to use; if it doesn't exist yet it offers to create it.
+
+```
+   Projects  by Wayne Scicluna                                                v2.7
+
+   Working folder C:\coding
+
+   PROJECTS
+   [1] GameEngine                 18 items, 2026-08-10 14:27
+   [2] imagetest                  6 items, 2026-10-12 14:42
+   [3] MCMod01                    24 items, 2026-08-10 10:01
+   ...
+
+   ACTIONS
+   [N] New project folder      create a folder here
+   [R] Rename a project        rename the folder
+   [D] Delete a project        to the Recycle Bin
+   [W] Set the working folder  where projects live
+   [ESC] Back
+```
+
+- **A number loads that project** — runs OpenCode inside it (same as choosing it with
+  **[F] Open a folder...**). Lists longer than nine accept two digits, so press `1` then `2`
+  for `12`; pressing a single digit acts immediately.
+- Each row shows how many items the folder holds and when it last changed. Nothing is scanned
+  recursively, so the list stays instant even for large project trees.
+
+#### [N] New project folder
+
+Creates a new folder inside the working folder.
+
+- Prompts for the name and trims stray spaces.
+- Rejects names Windows can't use: `Enter a folder name.`, the characters `< > : " / \ | ? *`, a
+  trailing dot, reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`),
+  and any name that already exists there.
+- After creating it, offers `Open it in OpenCode now? Type YES`.
+
+#### [R] Rename a project
+
+Renames a project folder in place. Shows the same numbered list, then prompts for the new name and
+applies the same validation as creating one.
+
+#### [D] Delete a project
+
+Sends a project folder to the **Recycle Bin**, so a mistake is recoverable.
+
+- Shows the full path, how many files it holds and its total size before asking.
+- Requires you to type `DELETE` (not just `YES`).
+- States plainly that Windows deletes for good if the Recycle Bin is off or full. If the Recycle
+  Bin can't be used the folder is **left alone** — nothing is removed and the reason is printed.
+- **Refuses to delete the launcher's own folder, or any folder containing it**, so you can't wipe
+  the source checkout the launcher is running from.
 
 ### Manage menu
 
@@ -498,7 +581,15 @@ A quick tour for anyone wanting to read or extend the launcher:
 - **`$LauncherVersion` / `$LauncherAuthor`** — shown in the title bar; the version is what the
   update check compares against the remote `VERSION`. A test asserts these two never drift apart.
 - **`Get-SourceCheckoutMarker` / `Get-UnexpectedLauncherItems`** — used by **[L]** to refuse to
-  delete a git checkout and to warn about files the launcher didn't create.
+  delete a git checkout and to warn about files the launcher didn't create. The launcher's own
+  `status.json` and `settings.json` count as known files here.
+- **`settings.json`** — a small JSON store in `%LOCALAPPDATA%\OpenCodeLauncher` holding the
+  Default Working Directory. `Read-Settings` returns an empty table for a missing or corrupt file
+  rather than failing, so a bad edit can't break the launcher.
+- **`Get-ProjectFolder`** — the project list is just the subfolders of the working folder, sorted
+  by name. There is no separate registry of projects to fall out of sync.
+- **`Test-SafeToDeleteProject`** — stops **[D]** from deleting the launcher's own folder or any
+  folder containing it.
 - **`Read-MenuKey`** — reads one key with `[Console]::ReadKey($true)`; returns `ESC` for the
   Escape key, otherwise the uppercase character. This is what gives single-keypress navigation
   and an `ESC`-to-go-back that batch `choice` can't do.
@@ -545,4 +636,4 @@ A quick tour for anyone wanting to read or extend the launcher:
 
 MIT — see [LICENSE](LICENSE).
 
-Version 2.6 — By Wayne Scicluna.
+Version 2.7 — By Wayne Scicluna.

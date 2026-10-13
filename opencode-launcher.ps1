@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "2.6"
+$LauncherVersion = "2.7"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -35,6 +35,16 @@ $OpenCodePkg  = "@opencode/cli"
 $StatusCacheDir = Join-Path $env:LOCALAPPDATA "OpenCodeLauncher"
 $StatusCachePath = Join-Path $StatusCacheDir "status.json"
 $StatusCacheTTL  = 600   # seconds
+
+# User preferences (the Default Working Directory, etc.). Kept beside the
+# status cache rather than in the launcher folder so it survives the launcher
+# being moved or re-installed.
+$SettingsDir  = $StatusCacheDir
+$SettingsPath = Join-Path $SettingsDir "settings.json"
+
+# The Default Working Directory: the single folder that holds every project.
+# Empty until the user picks one, which the Projects menu asks for on first use.
+$script:ProjectsDir = ""
 
 # Where to look for launcher updates, and which files to refresh.
 $UpdateRepo   = "JagerWayne/opencode-launcher"
@@ -657,8 +667,12 @@ function Get-SourceCheckoutMarker {
 
 function Get-UnexpectedLauncherItems {
   # Anything in the launcher folder that the launcher did not put there.
+  # status.json and settings.json are the launcher's own data files and live
+  # beside it when installed under %LOCALAPPDATA%, so they are not "unexpected".
   $known = @{}
   foreach ($f in $UpdateFiles) { $known[$f] = $true }
+  $known["status.json"] = $true
+  $known["settings.json"] = $true
   $found = @()
   if (Test-Path $LauncherDir) {
     $found = @(Get-ChildItem $LauncherDir -Force | Where-Object { -not $known.ContainsKey($_.Name) })
@@ -747,6 +761,378 @@ function Show-ManageMenu {
   }
 }
 
+# ----- settings ---------------------------------------------------------------
+
+function Read-Settings {
+  try {
+    if (-not (Test-Path $SettingsPath)) { return @{} }
+    $json = Get-Content $SettingsPath -Raw | ConvertFrom-Json
+    $h = @{}
+    foreach ($p in $json.PSObject.Properties) { $h[$p.Name] = $p.Value }
+    return $h
+  } catch { return @{} }
+}
+
+function Write-Settings {
+  param([hashtable]$Values)
+  try {
+    if (-not (Test-Path $SettingsDir)) {
+      New-Item -ItemType Directory -Path $SettingsDir -Force | Out-Null
+    }
+    ($Values | ConvertTo-Json) | Set-Content $SettingsPath -Encoding UTF8
+    return $true
+  } catch { return $false }
+}
+
+function Get-ProjectsDir {
+  # Returns the configured Default Working Directory, or $null if it has never
+  # been set or no longer exists on disk.
+  if ($script:ProjectsDir -and (Test-Path $script:ProjectsDir -PathType Container)) {
+    return $script:ProjectsDir
+  }
+  $s = Read-Settings
+  if ($s.ContainsKey("ProjectsDir") -and $s.ProjectsDir) {
+    if (Test-Path $s.ProjectsDir -PathType Container) {
+      $script:ProjectsDir = $s.ProjectsDir
+      return $script:ProjectsDir
+    }
+  }
+  return $null
+}
+
+function Set-ProjectsDir {
+  param([string]$Path)
+  $full = (Resolve-Path $Path).Path
+  $s = Read-Settings
+  $s["ProjectsDir"] = $full
+  [void](Write-Settings $s)
+  $script:ProjectsDir = $full
+  return $full
+}
+
+function Test-ValidProjectName {
+  # Returns an error message, or $null when the name can be used.
+  param([string]$Name, [string]$Root)
+  if ([string]::IsNullOrWhiteSpace($Name)) { return "Enter a folder name." }
+  $trimmed = $Name.Trim()
+  if ($trimmed -match '[<>:"/\\|?*]') {
+    return 'A folder name cannot contain  < > : " / \ | ? *'
+  }
+  if ($trimmed.EndsWith(".") -or $trimmed.EndsWith(" ")) {
+    return "A folder name cannot end with a dot or a space."
+  }
+  if ($trimmed -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$') {
+    return "'$trimmed' is a reserved Windows device name."
+  }
+  if ($Root -and (Test-Path (Join-Path $Root $trimmed))) {
+    return "'$trimmed' already exists there."
+  }
+  return $null
+}
+
+function Get-ProjectFolder {
+  # Every folder directly inside the Default Working Directory is a project.
+  param([string]$Root)
+  if (-not $Root -or -not (Test-Path $Root -PathType Container)) { return @() }
+  return @(Get-ChildItem $Root -Directory -Force -ErrorAction SilentlyContinue |
+           Sort-Object Name)
+}
+
+function Complete-IndexKey {
+  # Turns an already-read key into a list index. Accepts 1-9, or two digits for
+  # lists longer than nine, by peeking for an already-buffered second key so a
+  # single press still returns immediately.
+  param([string]$FirstKey)
+  if ($FirstKey -eq "ESC") { return -1 }
+  $s = $FirstKey
+  if ($s -notmatch '[0-9]') { return -1 }
+  try {
+    if ([Console]::KeyAvailable) {
+      $k2 = [Console]::ReadKey($true)
+      $s2 = [string]$k2.KeyChar
+      if ($s2 -match '[0-9]') { $s = $s + $s2 }
+    }
+  } catch {}
+  $n = 0
+  if ([int]::TryParse($s, [ref]$n)) { return $n }
+  return -1
+}
+
+function Write-ProjectRow {
+  param($Folder, [int]$Index)
+  $count = @(Get-ChildItem $Folder.FullName -Force -ErrorAction SilentlyContinue).Count
+  Write-Host "   [" -NoNewline -ForegroundColor $C_Section
+  Write-Host $Index -NoNewline -ForegroundColor $C_Key
+  Write-Host "] " -NoNewline -ForegroundColor $C_Section
+  Write-Host $Folder.Name -NoNewline -ForegroundColor $C_Label
+  Write-Host ("    {0} items, {1}" -f $count, $Folder.LastWriteTime.ToString("yyyy-MM-dd HH:mm")) -ForegroundColor $C_Hint
+}
+
+function Show-ProjectPicker {
+  # Draws the numbered project list and returns the chosen folder, or $null.
+  param([string]$Root, [string]$Heading)
+  $folders = @(Get-ProjectFolder $Root)
+  Write-Host ""
+  Write-Note $Heading $C_Hint
+  Write-Host ""
+  for ($i = 0; $i -lt $folders.Count; $i++) { Write-ProjectRow $folders[$i] ($i + 1) }
+  Write-Back
+  $n = Complete-IndexKey (Read-MenuKey)
+  if ($n -ge 1 -and $n -le $folders.Count) { return $folders[$n - 1] }
+  return $null
+}
+
+function Set-ProjectsDirInteractive {
+  # Asks for the Default Working Directory, offering to create it if missing.
+  Write-Title "Default Working Directory"
+  Write-Note "One folder that holds all your project folders." $C_Hint
+  Write-Note "The [P] Projects menu simply lists whatever is inside it." $C_Hint
+  $current = Get-ProjectsDir
+  if ($current) {
+    Write-Host ""
+    Write-Note "Current: $current" $C_Label
+  }
+  Write-Host ""
+  $p = Read-Host "   Folder path (Enter to cancel)"
+  if ([string]::IsNullOrWhiteSpace($p)) { Pause-Menu; return $false }
+  $p = $p.Trim().Trim('"')
+
+  if (-not (Test-Path $p)) {
+    Write-Host ""
+    Write-Note "That folder does not exist yet: $p" $C_Warn
+    $make = Read-Host "   Create it? Type YES"
+    if ($make -eq "YES") {
+      try {
+        New-Item -ItemType Directory -Path $p -Force | Out-Null
+        [void](Set-ProjectsDir $p)
+        Write-Note "Now using: $p" $C_Good
+        Pause-Menu
+        return $true
+      } catch {
+        Write-Host ""
+        Write-Note "Could not create it: $($_.Exception.Message)" $C_Bad
+      }
+    }
+    Pause-Menu
+    return $false
+  }
+  if (-not (Test-Path $p -PathType Container)) {
+    Write-Host ""
+    Write-Note "That is a file, not a folder." $C_Bad
+    Pause-Menu
+    return $false
+  }
+  [void](Set-ProjectsDir $p)
+  Write-Note "Now using: $p" $C_Good
+  Pause-Menu
+  return $true
+}
+
+function Projects-New {
+  param([string]$Root)
+  Write-Title "New Project Folder"
+  Write-Note "Created inside: $Root" $C_Hint
+  Write-Host ""
+  $name = Read-Host "   Folder name"
+  $err = Test-ValidProjectName $name $Root
+  if ($err) {
+    Write-Host ""
+    Write-Note $err $C_Bad
+    Pause-Menu
+    return
+  }
+  $target = Join-Path $Root $name.Trim()
+  try {
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+  } catch {
+    Write-Host ""
+    Write-Note "Could not create it: $($_.Exception.Message)" $C_Bad
+    Pause-Menu
+    return
+  }
+  Write-Host ""
+  Write-Note "Created: $target" $C_Good
+  Write-Host ""
+  $go = Read-Host "   Open it in OpenCode now? Type YES"
+  if ($go -eq "YES") {
+    Invoke-OpenCode -Arguments @($target) -Dir $target
+  } else {
+    Pause-Menu
+  }
+}
+
+function Projects-Rename {
+  param([string]$Root)
+  $folders = @(Get-ProjectFolder $Root)
+  if ($folders.Count -eq 0) {
+    Write-Title "Rename a Project Folder"
+    Write-Host ""
+    Write-Note "No project folders to rename." $C_Warn
+    Pause-Menu
+    return
+  }
+  Write-Title "Rename a Project Folder"
+  $chosen = Show-ProjectPicker $Root "Choose the project to rename:"
+  if (-not $chosen) { return }
+  Write-Host ""
+  $name = Read-Host ("   New name for '" + $chosen.Name + "'")
+  $err = Test-ValidProjectName $name $Root
+  if ($err) {
+    Write-Host ""
+    Write-Note $err $C_Bad
+    Pause-Menu
+    return
+  }
+  try {
+    Rename-Item -LiteralPath $chosen.FullName -NewName $name.Trim() -ErrorAction Stop
+    Write-Host ""
+    Write-Note ("Renamed '{0}' to '{1}'." -f $chosen.Name, $name.Trim()) $C_Good
+  } catch {
+    Write-Host ""
+    Write-Note "Could not rename it: $($_.Exception.Message)" $C_Bad
+  }
+  Pause-Menu
+}
+
+function Move-ToRecycleBin {
+  # Returns $true on success. Throws if the Recycle Bin cannot be used, rather
+  # than silently deleting for good.
+  param([string]$Path)
+  Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction SilentlyContinue
+  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
+    $Path,
+    [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+    [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin,
+    [Microsoft.VisualBasic.FileIO.UICancelOption]::DoNothing)
+  return (-not (Test-Path $Path))
+}
+
+function Test-SafeToDeleteProject {
+  # Returns a reason string if the folder must not be deleted, or $null if it
+  # is safe. Protects the launcher's own folder (and any folder containing it,
+  # such as a source checkout's parent).
+  param([string]$Path)
+  if (-not $Path) { return "No folder given." }
+  $launcherPath = ConvertTo-ComparablePath $LauncherDir
+  $targetPath  = ConvertTo-ComparablePath $Path
+  if (-not $targetPath) { return "No folder given." }
+  if ($targetPath -eq $launcherPath) {
+    return "That is the folder the launcher is running from ($LauncherDir)."
+  }
+  if ($launcherPath.StartsWith($targetPath + "\", [StringComparison]::OrdinalIgnoreCase)) {
+    return "That folder contains the running launcher ($LauncherDir)."
+  }
+  return $null
+}
+
+function Projects-Delete {
+  param([string]$Root)
+  $folders = @(Get-ProjectFolder $Root)
+  if ($folders.Count -eq 0) {
+    Write-Title "Delete a Project Folder"
+    Write-Host ""
+    Write-Note "No project folders to delete." $C_Warn
+    Pause-Menu
+    return
+  }
+  Write-Title "Delete a Project Folder"
+  $chosen = Show-ProjectPicker $Root "Choose the project to delete:"
+  if (-not $chosen) { return }
+
+  # Never delete the launcher itself, or a folder that contains it.
+  $unsafe = Test-SafeToDeleteProject $chosen.FullName
+  if ($unsafe) {
+    Write-Host ""
+    Write-Note "Refusing to delete that project." $C_Bad
+    Write-Note $unsafe $C_Hint
+    Pause-Menu
+    return
+  }
+
+  $files = @(Get-ChildItem $chosen.FullName -Recurse -Force -File -ErrorAction SilentlyContinue)
+  $size = ($files | Measure-Object Length -Sum).Sum
+  if (-not $size) { $size = 0 }
+  Write-Host ""
+  Write-Note "Folder : $($chosen.FullName)" $C_Label
+  Write-Note "Contents: $($files.Count) files, $([math]::Round($size / 1MB, 1)) MB" $C_Label
+  Write-Note "Changed : $($chosen.LastWriteTime)" $C_Label
+  Write-Host ""
+  Write-Note "This moves the folder to the Recycle Bin, so it can be undone." $C_Warn
+  Write-Note "Windows deletes it for good if the Recycle Bin is off or full." $C_Hint
+  Write-Host ""
+  $ans = Read-Host ("   Type DELETE to send '" + $chosen.Name + "' to the Recycle Bin")
+  if ($ans -ne "DELETE") {
+    Write-Host ""
+    Write-Note "Cancelled." $C_Hint
+    Pause-Menu
+    return
+  }
+
+  try {
+    if (Move-ToRecycleBin $chosen.FullName) {
+      Write-Host ""
+      Write-Note ("'{0}' moved to the Recycle Bin." -f $chosen.Name) $C_Good
+      Pause-Menu
+    } else {
+      Write-Host ""
+      Write-Note "The folder is still there; nothing was deleted." $C_Warn
+      Pause-Menu
+    }
+  } catch {
+    Write-Host ""
+    Write-Note "The Recycle Bin could not be used: $($_.Exception.Message)" $C_Bad
+    Write-Note "Nothing was deleted." $C_Good
+    Pause-Menu
+  }
+}
+
+function Show-ProjectsMenu {
+  $root = Get-ProjectsDir
+  if (-not $root) {
+    # First run: there is no Default Working Directory yet, so ask for one.
+    if (-not (Set-ProjectsDirInteractive)) { return }
+    $root = Get-ProjectsDir
+    if (-not $root) { return }
+  }
+
+  while ($true) {
+    Write-Title "Projects"
+    Write-Host "   Working folder " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $root -ForegroundColor $C_Label
+    $folders = @(Get-ProjectFolder $root)
+    if ($folders.Count -eq 0) {
+      Write-Host ""
+      Write-Note "Nothing in here yet - press [N] to create a project." $C_Warn
+    } else {
+      Write-Section "PROJECTS"
+      for ($i = 0; $i -lt $folders.Count; $i++) { Write-ProjectRow $folders[$i] ($i + 1) }
+    }
+    Write-Section "ACTIONS"
+    Write-Item "N" "New project folder"      "create a folder here"
+    Write-Item "R" "Rename a project"        "rename the folder"
+    Write-Item "D" "Delete a project"        "to the Recycle Bin"
+    Write-Item "W" "Set the working folder"  "where projects live"
+    Write-Back
+
+    $k = Read-MenuKey
+    if ($k -eq "ESC") { return }
+    switch ($k) {
+      "N" { Projects-New $root; continue }
+      "R" { Projects-Rename $root; continue }
+      "D" { Projects-Delete $root; continue }
+      "W" { [void](Set-ProjectsDirInteractive); $root = Get-ProjectsDir; continue }
+    }
+    # A number loads that project: run OpenCode inside it.
+    if ($k -match '^[0-9]$') {
+      $n = Complete-IndexKey $k
+      if ($n -ge 1 -and $n -le $folders.Count) {
+        $full = $folders[$n - 1].FullName
+        Invoke-OpenCode -Arguments @($full) -Dir $full
+      }
+    }
+  }
+}
+
 # ----- main loop -------------------------------------------------------------
 
 function Show-MainMenu {
@@ -760,6 +1146,9 @@ function Show-MainMenu {
     Write-Item "C" "Resume last session"          "picks up where you left off"
     Write-Item "F" "Open a folder..."             "choose a project folder"
     Write-Item "S" "Open web interface"           "opencode web"
+    Write-Section "PROJECTS"
+    Write-Item "P" "Pick a project..."            "from your working folder"
+    Write-Item "W" "Set the working folder..."    "where projects live"
     Write-Section "MANAGE"
     Write-Item "M" "Manage"                       "update, back up, restore..."
     Write-Section "EXIT"
@@ -771,6 +1160,8 @@ function Show-MainMenu {
       "C"   { Action-Continue }
       "F"   { Action-Folder }
       "S"   { Action-Web }
+      "P"   { Show-ProjectsMenu }
+      "W"   { [void](Set-ProjectsDirInteractive) }
       "M"   { Show-ManageMenu }
       "Q"   { return }
       "ESC" { return }
