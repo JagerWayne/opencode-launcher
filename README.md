@@ -1,6 +1,6 @@
 # OpenCode Launcher
 
-**Version 2.4 — By Wayne Scicluna**
+**Version 2.5 — By Wayne Scicluna**
 
 A colourful, keypress-driven Windows menu for [OpenCode](https://opencode.ai). Instead of
 remembering subcommands and flags, you get one window with a key for each common action —
@@ -14,7 +14,7 @@ for the launcher itself. Colours are used throughout (title bar, section headers
 line, and green/red indicators), and it falls back gracefully if the console is tiny or plain.
 
 ```
-   OpenCode Launcher  by Wayne Scicluna                     v2.4
+   OpenCode Launcher  by Wayne Scicluna                     v2.5
 
    OpenCode opencode v2.0.27     Node v24.17.0
    Folder C:\Users\You
@@ -97,7 +97,8 @@ Windows.
 | `run.ps1` | One-line runner that downloads and opens the menu without installing anything. |
 | `run.bat` | Double-clickable wrapper that runs `run.ps1`. |
 | `VERSION` | The published version, read by the launcher's update check. |
-| `tests/launcher.Tests.ps1` | Pester regression tests. Run with `Invoke-Pester .\tests`. |
+| `tests/launcher.Tests.ps1` | Pester regression tests for the launcher. |
+| `tests/backup.Tests.ps1` | Pester regression tests for backup/restore. |
 | `.github/workflows/ci.yml` | Runs the parse check, the CRLF check and the Pester suite on every push. |
 | `README.md` | This document. |
 | `LICENSE` | MIT licence. |
@@ -286,8 +287,18 @@ Installs OpenCode, checking the prerequisite first.
    run `winget install --id OpenJS.NodeJS.LTS -e --silent` for you (you have to type `YES`).
    Without `winget` it shows the download link (<https://nodejs.org/>) and waits. Either way it
    re-checks afterwards, and tells you what to do if `npm` is still missing.
-3. **Installs OpenCode.** Runs `npm install -g @opencode/cli@latest --no-fund --no-audit`. If
-   OpenCode is already present it simply refreshes the install.
+3. **Installs OpenCode.** Runs
+   `npm install -g @opencode/cli@latest --no-fund --no-audit --allow-scripts=@opencode/cli`.
+   If OpenCode is already present it simply refreshes the install.
+
+> **The `allow-scripts` flag:** npm 11 blocks package install scripts by default and warns
+> `npm warn allow-scripts ...`. `@opencode/cli` has a `postinstall` that picks the right
+> platform binary (on Windows it also checks whether your CPU supports AVX2, which is why both
+> the `x64` and `x64-baseline` builds are downloaded) and copies it into place. Without it
+> running, the installed binary can go missing and `opencode` breaks *after* an upgrade that
+> reported success. The allow is scoped to `@opencode/cli` only — the launcher never sets
+> `allow-scripts=true` or a wildcard, which would re-enable arbitrary install scripts from
+> every package.
 
 > **First run:** if OpenCode isn't installed when you start the launcher, it opens this Install
 > screen straight away, then returns to the main menu.
@@ -354,12 +365,43 @@ Closes the launcher window.
 | --- | --- |
 | `config/` | `%USERPROFILE%\.config\opencode` — `opencode.jsonc`/`opencode.json`, custom commands, agents, skills, plugins, and the launcher (minus `node_modules` and the backups themselves). |
 | `auth.json` | `%USERPROFILE%\.local\share\opencode\auth.json` — your provider **API keys**. |
-| `sessions/` | `opencode.db` (snapshotted via SQLite's online backup when `sqlite3` is available) plus the `storage` and `snapshot` folders. |
+| `sessions/` | `opencode.db` plus the `storage` and `snapshot` folders. See the note below on how the database is captured. |
 | `env.json` | User environment variables whose name looks like a key (`FAL_KEY`, `*_API_KEY`, `*_TOKEN`, `*_SECRET`). |
 | `manifest.json` | A summary (host, time, what was included) with no secret values. |
 
+### How the session database is captured
+
+`opencode.db` is a **live SQLite database** (currently ~110 MB with an active write-ahead log).
+How it is copied depends on what is available:
+
+- **`sqlite3` is on PATH** — the script uses SQLite's online `.backup`, which is safe to run while
+  opencode is writing.
+- **`sqlite3` is not on PATH** — the script copies the database **only while nothing has it
+  open**. It tries an exclusive open first; if that fails, or an `opencode` process is running,
+  it **stops and tells you to close opencode**, rather than writing an archive that probably
+  won't restore.
+
+> **Why it refuses.** Copying the database and its `-wal`/`-shm` journals while another process is
+> writing interleaves database pages and WAL frames from different instants. The result can be
+> rejected by SQLite as malformed, or restore with recent sessions silently missing. An archive
+> that fails to restore is worse than no archive, so the script declines to produce one. **If
+> `[B]` reports that opencode is running, quit opencode (including the window the launcher ran
+> it in) and press `[B]` again.**
+
+Whichever path is used, the copy is verified afterwards: the SQLite header is checked for a valid
+magic number and a sane page size, and a bad copy aborts the backup instead of being archived.
+The page count is recorded in `manifest.json`.
+
+> **Archives are portable ZIPs.** Entry names use `/` as the ZIP specification requires.
+> Windows PowerShell's built-in `Compress-Archive` writes `\` instead (and so does
+> `ZipFile::CreateFromDirectory` on .NET Framework), which makes every entry read as one flat
+> filename on Linux, macOS and Python — so the script builds the archive entry by entry instead.
+> Archives produced by **v2.4 and earlier still use `\`** and are only restorable on Windows.
+
 Restore puts the config back, restores `auth.json`, restores the session database and state, and
 re-sets the environment variables. **Restart opencode (and open a new terminal) after a restore.**
+The config and data folders are created if they don't exist, so a restore works on a machine that
+has never run opencode.
 
 The same script can be driven from a terminal:
 
@@ -487,4 +529,4 @@ A quick tour for anyone wanting to read or extend the launcher:
 
 MIT — see [LICENSE](LICENSE).
 
-Version 2.4 — By Wayne Scicluna.
+Version 2.5 — By Wayne Scicluna.

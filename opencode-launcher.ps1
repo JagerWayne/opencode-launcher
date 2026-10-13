@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "2.4"
+$LauncherVersion = "2.5"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -405,9 +405,13 @@ function Manage-Install {
     }
   }
   Write-Host ""
-  Write-Note "Running: npm install -g $OpenCodePkg@latest" $C_Hint
+  Write-Note "Running: npm install -g $OpenCodePkg@latest --allow-scripts=$OpenCodePkg" $C_Hint
   Write-Host ""
-  & npm install -g "$OpenCodePkg@latest" --no-fund --no-audit
+  # npm 11 blocks install scripts by default and warns about it. opencode's
+  # postinstall picks the right platform binary (it checks for AVX2 on Windows)
+  # and copies it into place, so it has to run. The allow is scoped to this one
+  # package instead of turning install scripts on globally.
+  & npm install -g "$OpenCodePkg@latest" --no-fund --no-audit --allow-scripts="$OpenCodePkg"
   Write-Host ""
   if ($LASTEXITCODE -eq 0) { Write-Note "Done. opencode should now be installed." $C_Good }
   else { Write-Note "npm exited with code $LASTEXITCODE." $C_Bad }
