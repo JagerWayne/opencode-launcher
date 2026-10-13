@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check every .ps1 parses
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem -Path . -Recurse -Include *.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) {
+              Write-Host "FAIL $($_.Name)"
+              $errors | ForEach-Object { Write-Host "     $($_.Message)" }
+              $failed = $true
+            } else {
+              Write-Host "ok   $($_.Name)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: .cmd/.bat must be CRLF
+        # raw.githubusercontent.com serves the committed bytes verbatim, so a
+        # LF-only .cmd breaks cmd's goto/labels for anyone installing.
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem -Path . -Recurse -Include *.cmd, *.bat | ForEach-Object {
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            for ($i = 0; $i -lt $bytes.Length; $i++) {
+              if ($bytes[$i] -eq 10 -and ($i -eq 0 -or $bytes[$i - 1] -ne 13)) {
+                Write-Host "FAIL $($_.Name) has a bare LF at byte $i"
+                $failed = $true
+                break
+              }
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Pester tests
+        shell: pwsh
+        run: |
+          Install-Module Pester -Force -SkipPublisherCheck -MinimumVersion 3.4.0
+          $r = Invoke-Pester ./tests -PassThru -Quiet
+          if ($r.FailedCount -gt 0) { exit 1 }
+
+      - name: PSScriptAnalyzer (informational)
+        # Non-blocking until the rule set is agreed. Turn this into a hard gate
+        # by removing continue-on-error.
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force
+          Invoke-ScriptAnalyzer -Path ./opencode-launcher.ps1, ./opencode-backup.ps1,
+                                 ./install.ps1, ./run.ps1 -Severity Warning, Error |
+            Format-Table -AutoSize

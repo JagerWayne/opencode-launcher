@@ -69,12 +69,25 @@ Write-Ok 'Launcher files downloaded.'
 # 3. Create the "oc" shim pointing at the launcher.
 $launcher = Join-Path $InstallDir 'opencode-launcher.ps1'
 $shim     = Join-Path $BinDir 'oc.cmd'
+# Keep the shim pure ASCII where possible. cmd reads a .cmd using the console
+# code page, so a non-ASCII install path can be mangled; %LOCALAPPDATA% is
+# expanded by cmd itself and is always ASCII.
+$defaultDir = Join-Path $env:LOCALAPPDATA 'OpenCodeLauncher'
+function Get-NormalizedPath($p) {
+    if (-not $p) { return '' }
+    try { return [IO.Path]::GetFullPath($p).TrimEnd('\') } catch { return $p.TrimEnd('\') }
+}
+$target = if ((Get-NormalizedPath $InstallDir) -eq (Get-NormalizedPath $defaultDir)) {
+    '%LOCALAPPDATA%\OpenCodeLauncher\opencode-launcher.ps1'
+} else {
+    $launcher
+}
 $shimBody = @"
 @echo off
 rem Launches the OpenCode Launcher. Created by install.ps1.
-powershell -NoProfile -ExecutionPolicy Bypass -File "$launcher" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "$target" %*
 "@
-Set-Content -LiteralPath $shim -Value $shimBody -Encoding ASCII
+[System.IO.File]::WriteAllLines($shim, ($shimBody.TrimEnd() -split "`r?`n"), [System.Text.Encoding]::ASCII)
 Write-Ok "Created shortcut: $shim"
 
 # 4. Make sure the shim folder is on the user PATH.

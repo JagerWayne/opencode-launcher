@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "2.3"
+$LauncherVersion = "2.4"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -29,6 +29,12 @@ $BackupScript = Join-Path $LauncherDir "opencode-backup.ps1"
 $ShimDir      = Join-Path $env:USERPROFILE ".local\bin"
 $ShimPath     = Join-Path $ShimDir "oc.cmd"
 $OpenCodePkg  = "@opencode/cli"
+
+# Probing opencode/node costs ~0.6s (it spawns a process per probe), so the
+# result is cached for a short while. Refresh-Status recomputes and rewrites.
+$StatusCacheDir = Join-Path $env:LOCALAPPDATA "OpenCodeLauncher"
+$StatusCachePath = Join-Path $StatusCacheDir "status.json"
+$StatusCacheTTL  = 600   # seconds
 
 # Where to look for launcher updates, and which files to refresh.
 $UpdateRepo   = "JagerWayne/opencode-launcher"
@@ -86,7 +92,8 @@ function Update-SessionPath {
   } catch {}
 }
 
-function Get-Status {
+# The expensive version: actually runs the probes.
+function Measure-Status {
   $hasOC  = Test-Command "opencode"
   $ocVer  = ""
   if ($hasOC) { try { $ocVer = ((& opencode --version 2>$null) | Select-Object -First 1) } catch {} }
@@ -95,8 +102,43 @@ function Get-Status {
   if (Test-Command "node") { try { $node = (& node --version 2>$null) } catch {} }
   return [pscustomobject]@{ HasOC = $hasOC; OCVer = $ocVer; HasNpm = $hasNpm; Node = $node }
 }
+
+function Read-StatusCache {
+  try {
+    if (-not (Test-Path $StatusCachePath)) { return $null }
+    $age = ((Get-Date) - (Get-Item $StatusCachePath).LastWriteTime).TotalSeconds
+    if ($age -gt $StatusCacheTTL) { return $null }
+    $c = Get-Content $StatusCachePath -Raw | ConvertFrom-Json
+    return [pscustomobject]@{
+      HasOC = [bool]$c.HasOC; OCVer = [string]$c.OCVer
+      HasNpm = [bool]$c.HasNpm; Node = [string]$c.Node
+    }
+  } catch { return $null }
+}
+
+function Write-StatusCache {
+  param($Status)
+  try {
+    if (-not (Test-Path $StatusCacheDir)) {
+      New-Item -ItemType Directory -Path $StatusCacheDir -Force | Out-Null
+    }
+    ($Status | ConvertTo-Json) | Set-Content $StatusCachePath -Encoding ASCII
+  } catch {}
+}
+
+function Get-Status {
+  $cached = Read-StatusCache
+  if ($cached) { return $cached }
+  $s = Measure-Status
+  Write-StatusCache $s
+  return $s
+}
 $script:Status = Get-Status
-function Refresh-Status { $script:Status = Get-Status }
+# Always re-measures - used after actions that can change what is installed.
+function Refresh-Status {
+  $script:Status = Measure-Status
+  Write-StatusCache $script:Status
+}
 
 # ----- drawing ---------------------------------------------------------------
 
@@ -192,11 +234,30 @@ function Invoke-OpenCode {
 
 # ----- user PATH helpers (for the "oc" shortcut) -----------------------------
 
+function ConvertTo-ComparablePath {
+  # Normalise so a trailing backslash, a different case, or a .\. prefix does
+  # not make an existing PATH entry look like a different directory.
+  param([string]$Path)
+  if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+  try { return [IO.Path]::GetFullPath($Path.Trim()).TrimEnd('\') }
+  catch { return $Path.Trim().TrimEnd('\') }
+}
+
+function Get-UserPathRaw {
+  # Returns the raw (unmodified) non-empty entries from the user PATH.
+  $p = [Environment]::GetEnvironmentVariable("Path", "User")
+  if (-not $p) { return @() }
+  return @($p -split ";" | Where-Object { $_ -and $_.Trim() })
+}
+
 function Test-DirOnUserPath {
   param([string]$Dir)
-  $p = [Environment]::GetEnvironmentVariable("Path", "User")
-  if (-not $p) { return $false }
-  return (($p -split ";") -contains $Dir)
+  $target = ConvertTo-ComparablePath $Dir
+  if (-not $target) { return $false }
+  foreach ($e in (Get-UserPathRaw)) {
+    if ((ConvertTo-ComparablePath $e) -eq $target) { return $true }
+  }
+  return $false
 }
 
 function Add-DirToUserPath {
@@ -204,22 +265,36 @@ function Add-DirToUserPath {
   if (Test-DirOnUserPath $Dir) { return $false }
   $p = [Environment]::GetEnvironmentVariable("Path", "User")
   if (-not $p) { $p = "" }
-  [Environment]::SetEnvironmentVariable("Path", ($p.TrimEnd(";") + ";" + $Dir), "User")
+  # Append the normalised form; existing entries are left exactly as they are.
+  $target = ConvertTo-ComparablePath $Dir
+  [Environment]::SetEnvironmentVariable("Path", ($p.TrimEnd(";") + ";" + $target), "User")
   return $true
 }
 
 function Remove-DirFromUserPath {
   param([string]$Dir)
-  $p = [Environment]::GetEnvironmentVariable("Path", "User")
-  if (-not $p) { return $false }
-  $kept = $p -split ";" | Where-Object { $_ -ne "" -and $_ -ne $Dir }
+  $target = ConvertTo-ComparablePath $Dir
+  if (-not $target) { return $false }
+  $raw = @(Get-UserPathRaw)
+  # Keep each surviving entry verbatim, only dropping the one being removed.
+  $kept = @($raw | Where-Object { (ConvertTo-ComparablePath $_) -ne $target })
+  if ($kept.Count -eq $raw.Count) { return $false }
   [Environment]::SetEnvironmentVariable("Path", ($kept -join ";"), "User")
   return $true
 }
 
 function Write-OcShim {
   if (-not (Test-Path $ShimDir)) { New-Item -ItemType Directory -Path $ShimDir -Force | Out-Null }
-  $scriptPath = Join-Path $LauncherDir "opencode-launcher.ps1"
+  # Prefer an all-ASCII target. A .cmd file's bytes are interpreted using the
+  # console code page, so a non-ASCII install path in the shim can be mangled
+  # into an unopenable path. The default install folder is under
+  # %LOCALAPPDATA%, which cmd expands itself and which is always ASCII.
+  $defaultDir = Join-Path $env:LOCALAPPDATA "OpenCodeLauncher"
+  $scriptPath = if ((ConvertTo-ComparablePath $LauncherDir) -eq (ConvertTo-ComparablePath $defaultDir)) {
+    "%LOCALAPPDATA%\OpenCodeLauncher\opencode-launcher.ps1"
+  } else {
+    Join-Path $LauncherDir "opencode-launcher.ps1"
+  }
   # Build the run line first: `,` binds tighter than `+`, so inlining the
   # concatenation inside @(...) would split it into separate array elements.
   $runLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' + $scriptPath + '" %*'
@@ -228,7 +303,16 @@ function Write-OcShim {
     'rem Launches the OpenCode Launcher. Managed by opencode-launcher.ps1.',
     $runLine
   )
-  Set-Content -Path $ShimPath -Value $lines -Encoding ASCII
+  # WriteAllLines gives us CRLF, which cmd requires.
+  [System.IO.File]::WriteAllLines($ShimPath, $lines, [System.Text.Encoding]::ASCII)
+  if ($scriptPath -cmatch '[^\x00-\x7F]') {
+    # cmd reads a .cmd using the console code page, so a non-ASCII install
+    # path cannot survive in a shim. Say so instead of leaving a broken oc.
+    Write-Host "   WARNING: the install path has non-ASCII characters, which" -ForegroundColor Yellow
+    Write-Host "            cmd cannot pass reliably from a .cmd shim." -ForegroundColor Yellow
+    Write-Host "            Install to a plain folder such as" -ForegroundColor Yellow
+    Write-Host "            %LOCALAPPDATA%\OpenCodeLauncher to avoid this." -ForegroundColor Yellow
+  }
 }
 
 # ----- main-menu actions -----------------------------------------------------
@@ -289,25 +373,41 @@ function Manage-Install {
   if (-not (Test-Command "npm")) {
     Write-Host ""
     Write-Note "Node.js (which provides npm) is required, but npm was not found." $C_Warn
-    Write-Note "Download and install the Node.js LTS build from:" $C_Hint
-    Write-Host ""
-    Write-Note "    https://nodejs.org/" $C_Label
-    Write-Host ""
-    Write-Note "Install it, then press any key to check again." $C_Hint
-    [void][Console]::ReadKey($true)
-    Update-SessionPath
-    if (-not (Test-Command "npm")) {
+    if (Test-Command "winget") {
       Write-Host ""
-      Write-Note "npm is still not available. Install Node.js from https://nodejs.org/," $C_Bad
-      Write-Note "open a new terminal, and choose Install again." $C_Hint
-      Pause-Menu
-      return
+      Write-Note "Install Node.js LTS automatically with winget?" $C_Hint
+      $go = Read-Host "   Type YES to install Node.js"
+      if ($go -eq "YES") {
+        Write-Host ""
+        Write-Note "Running: winget install --id OpenJS.NodeJS.LTS -e --silent" $C_Hint
+        Write-Host ""
+        & winget install --id OpenJS.NodeJS.LTS -e --silent `
+          --accept-package-agreements --accept-source-agreements
+        Update-SessionPath
+        Write-Host ""
+      }
+    }
+    if (-not (Test-Command "npm")) {
+      Write-Note "npm is still not available. Install the Node.js LTS build from:" $C_Hint
+      Write-Host ""
+      Write-Note "    https://nodejs.org/" $C_Label
+      Write-Host ""
+      Write-Note "then press any key to check again." $C_Hint
+      [void][Console]::ReadKey($true)
+      Update-SessionPath
+      if (-not (Test-Command "npm")) {
+        Write-Host ""
+        Write-Note "npm is still missing. Install Node.js, open a new terminal," $C_Bad
+        Write-Note "and choose Install again." $C_Hint
+        Pause-Menu
+        return
+      }
     }
   }
   Write-Host ""
   Write-Note "Running: npm install -g $OpenCodePkg@latest" $C_Hint
   Write-Host ""
-  & npm install -g "$OpenCodePkg@latest"
+  & npm install -g "$OpenCodePkg@latest" --no-fund --no-audit
   Write-Host ""
   if ($LASTEXITCODE -eq 0) { Write-Note "Done. opencode should now be installed." $C_Good }
   else { Write-Note "npm exited with code $LASTEXITCODE." $C_Bad }
@@ -467,23 +567,67 @@ function Manage-SetupShortcut {
   Pause-Menu
 }
 
+function Get-SourceCheckoutMarker {
+  # A launcher running out of a git checkout must never delete the checkout.
+  # -Force would remove .git (hidden) along with README/LICENSE and the history.
+  foreach ($marker in @(".git", ".gitattributes")) {
+    if (Test-Path (Join-Path $LauncherDir $marker)) { return $marker }
+  }
+  return $null
+}
+
+function Get-UnexpectedLauncherItems {
+  # Anything in the launcher folder that the launcher did not put there.
+  $known = @{}
+  foreach ($f in $UpdateFiles) { $known[$f] = $true }
+  $found = @()
+  if (Test-Path $LauncherDir) {
+    $found = @(Get-ChildItem $LauncherDir -Force | Where-Object { -not $known.ContainsKey($_.Name) })
+  }
+  return $found
+}
+
 function Manage-UninstallLauncher {
   Write-Title "Uninstall This Launcher"
   Write-Note "Removes the oc shortcut and the launcher files:" $C_Warn
   Write-Note "  $ShimPath" $C_Hint
   Write-Note "  $LauncherDir" $C_Hint
   Write-Note "opencode itself, your config and backups are NOT touched." $C_Hint
+
+  # Refuse outright when this is a source checkout: deleting it would destroy
+  # the git history, not just the launcher.
+  $marker = Get-SourceCheckoutMarker
+  if ($marker) {
+    Write-Host ""
+    Write-Note "This folder looks like a source checkout (found '$marker')." $C_Bad
+    Write-Note "Uninstall will not delete it, so your git history stays safe." $C_Good
+    Write-Host ""
+    Write-Note "To remove just the launcher, delete these files yourself:" $C_Hint
+    foreach ($f in $UpdateFiles) { Write-Note "  $f" $C_Label }
+    Write-Note "  and then the oc shim: $ShimPath" $C_Label
+    Write-Host ""
+    Pause-Menu
+    return
+  }
+
+  $extra = Get-UnexpectedLauncherItems
+  if ($extra.Count -gt 0) {
+    Write-Host ""
+    Write-Note "This folder also contains files the launcher did not create:" $C_Warn
+    foreach ($e in $extra) { Write-Note "  $($e.Name)" $C_Label }
+    Write-Note "They will be deleted too." $C_Warn
+  }
+
   Write-Host ""
   $ans = Read-Host "   Type YES to remove the launcher"
   if ($ans -ne "YES") { return }
 
   Set-Location $env:USERPROFILE
   Remove-Item $ShimPath -Force -ErrorAction SilentlyContinue
-  foreach ($f in @("opencode-launcher.ps1", "opencode-backup.ps1", "opencode-backup.cmd", "install.ps1", "run.ps1", "run.bat", "VERSION")) {
-    Remove-Item (Join-Path $LauncherDir $f) -Force -ErrorAction SilentlyContinue
-  }
+  # A single recursive delete: if it fails nothing is half-removed.
   Remove-Item $LauncherDir -Force -Recurse -ErrorAction SilentlyContinue
-  Remove-DirFromUserPath $LauncherDir | Out-Null
+  # Remove the directory that [O] actually added to PATH, not the install dir.
+  Remove-DirFromUserPath $ShimDir | Out-Null
 
   Write-Host ""
   Write-Note "Launcher removed. You can close this window." $C_Good
@@ -557,8 +701,12 @@ function Show-MainMenu {
 
 if (-not $NoMenu) {
   if (-not $script:Status.HasOC) {
-    # OpenCode isn't installed yet - drop straight into the Install screen.
-    Manage-Install
+    # That may have come from the status cache - confirm before nagging.
+    Refresh-Status
+    if (-not $script:Status.HasOC) {
+      # OpenCode isn't installed yet - drop straight into the Install screen.
+      Manage-Install
+    }
   }
   Show-MainMenu
 }

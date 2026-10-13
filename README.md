@@ -1,6 +1,6 @@
 # OpenCode Launcher
 
-**Version 2.3 — By Wayne Scicluna**
+**Version 2.4 — By Wayne Scicluna**
 
 A colourful, keypress-driven Windows menu for [OpenCode](https://opencode.ai). Instead of
 remembering subcommands and flags, you get one window with a key for each common action —
@@ -14,7 +14,7 @@ for the launcher itself. Colours are used throughout (title bar, section headers
 line, and green/red indicators), and it falls back gracefully if the console is tiny or plain.
 
 ```
-   OpenCode Launcher  by Wayne Scicluna                     v2.3
+   OpenCode Launcher  by Wayne Scicluna                     v2.4
 
    OpenCode opencode v2.0.27     Node v24.17.0
    Folder C:\Users\You
@@ -78,9 +78,8 @@ line, and green/red indicators), and it falls back gracefully if the console is 
 - **Windows** with **Windows PowerShell 5.1** (included in Windows 10/11). The launcher is a
   `.ps1` file; the `oc.cmd` shim runs it with `powershell -NoProfile -ExecutionPolicy Bypass`.
 - **Node.js / npm** to install and run OpenCode — but only if you don't already have OpenCode.
-  If Node.js is missing, the launcher's **[I] Install or repair** option points you at
-  <https://nodejs.org/> to download and install it yourself; it does **not** install Node.js for
-  you.
+  If Node.js is missing, **[I] Install or repair** offers to install the Node.js LTS build with
+  `winget`, and falls back to pointing you at <https://nodejs.org/> if `winget` isn't available.
 
 No Python and no Node dependency for the launcher itself — just the PowerShell that ships with
 Windows.
@@ -98,6 +97,8 @@ Windows.
 | `run.ps1` | One-line runner that downloads and opens the menu without installing anything. |
 | `run.bat` | Double-clickable wrapper that runs `run.ps1`. |
 | `VERSION` | The published version, read by the launcher's update check. |
+| `tests/launcher.Tests.ps1` | Pester regression tests. Run with `Invoke-Pester .\tests`. |
+| `.github/workflows/ci.yml` | Runs the parse check, the CRLF check and the Pester suite on every push. |
 | `README.md` | This document. |
 | `LICENSE` | MIT licence. |
 
@@ -184,12 +185,19 @@ in any command window opens the launcher menu. The shim it writes is:
 ```bat
 @echo off
 rem Launches the OpenCode Launcher. Managed by opencode-launcher.ps1.
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\opencode-launcher.ps1" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%LOCALAPPDATA%\OpenCodeLauncher\opencode-launcher.ps1" %*
 ```
+
+When the launcher sits in the default folder, the shim uses `%LOCALAPPDATA%` instead of a
+literal path. `cmd` expands it itself, so the shim stays pure ASCII and keeps working even if
+your Windows profile folder contains non-English characters. Install to a custom folder and the
+shim uses that folder's literal path instead.
 
 It drops the shim in `%USERPROFILE%\.local\bin` (a common personal-scripts folder) and creates
 that folder if needed. A newly added `PATH` entry takes effect in command windows opened
-**after** the change — already-open windows keep their old `PATH` until restarted.
+**after** the change — already-open windows keep their old `PATH` until restarted. Re-running
+**[O]** is safe: path comparison ignores case and trailing backslashes, so it never appends a
+duplicate entry.
 
 ---
 
@@ -274,12 +282,12 @@ Updates OpenCode to the latest version using its own updater.
 Installs OpenCode, checking the prerequisite first.
 
 1. **Checks for npm.** If `npm` is present it skips straight to step 3.
-2. **Points you at Node.js if needed.** If `npm` is missing it shows the download link
-   (<https://nodejs.org/>) and waits. Install the Node.js LTS build, press a key, and it
-   re-checks; if npm still isn't found it asks you to install Node.js, open a new terminal and
-   try again. Node.js is **not** installed automatically.
-3. **Installs OpenCode.** Runs `npm install -g @opencode/cli@latest`. If OpenCode is already
-   present it simply refreshes the install.
+2. **Installs Node.js if needed.** If `npm` is missing and `winget` is available, it offers to
+   run `winget install --id OpenJS.NodeJS.LTS -e --silent` for you (you have to type `YES`).
+   Without `winget` it shows the download link (<https://nodejs.org/>) and waits. Either way it
+   re-checks afterwards, and tells you what to do if `npm` is still missing.
+3. **Installs OpenCode.** Runs `npm install -g @opencode/cli@latest --no-fund --no-audit`. If
+   OpenCode is already present it simply refreshes the install.
 
 > **First run:** if OpenCode isn't installed when you start the launcher, it opens this Install
 > screen straight away, then returns to the main menu.
@@ -321,10 +329,15 @@ folder or on a new machine.
 
 Removes the `oc` shortcut and the launcher files (`opencode-launcher.ps1`,
 `opencode-backup.ps1`, `opencode-backup.cmd`, `install.ps1`, `run.ps1`,
-`run.bat`, `VERSION`) and drops the launcher folder from your user `PATH`. OpenCode itself and
-your config/backups are **not** touched.
+`run.bat`, `VERSION`) and drops `%USERPROFILE%\.local\bin` from your user `PATH`. OpenCode itself
+and your config/backups are **not** touched.
 
 - Asks `Type YES to remove the launcher` and only proceeds on an explicit **YES**.
+- **Refuses to delete a git checkout.** If the launcher is running from a source folder (one
+  containing `.git` or `.gitattributes`) it stops and lists the files to remove by hand, so a
+  repo and its history are never destroyed.
+- If the folder holds files the launcher didn't create, it lists them first so you know what
+  will go.
 
 ### [Q] Quit
 
@@ -407,6 +420,12 @@ The line just under the title is refreshed every time a menu is drawn:
 This lets you see at a glance whether you need to run **[I]** first. If OpenCode isn't installed,
 the run/update actions print a reminder to choose **[I]** instead of failing.
 
+Checking the versions means running `opencode --version` and `node --version`, which costs about
+half a second. The result is cached in `%LOCALAPPDATA%\OpenCodeLauncher\status.json` for ten
+minutes, so repeat launches are noticeably faster; anything that changes what's installed
+(**[I]**, **[U]**, **[X]**) re-measures immediately and refreshes the cache. A stale or damaged
+cache is ignored rather than trusted.
+
 ---
 
 ## How the internals work
@@ -419,7 +438,9 @@ A quick tour for anyone wanting to read or extend the launcher:
   fallback, the update downloads, the `oc` shim target) is resolved relative to it, so the
   folder is relocatable.
 - **`$LauncherVersion` / `$LauncherAuthor`** — shown in the title bar; the version is what the
-  update check compares against the remote `VERSION`.
+  update check compares against the remote `VERSION`. A test asserts these two never drift apart.
+- **`Get-SourceCheckoutMarker` / `Get-UnexpectedLauncherItems`** — used by **[L]** to refuse to
+  delete a git checkout and to warn about files the launcher didn't create.
 - **`Read-MenuKey`** — reads one key with `[Console]::ReadKey($true)`; returns `ESC` for the
   Escape key, otherwise the uppercase character. This is what gives single-keypress navigation
   and an `ESC`-to-go-back that batch `choice` can't do.
@@ -429,8 +450,8 @@ A quick tour for anyone wanting to read or extend the launcher:
   fresh screen. The title bar and section labels are drawn as coloured bars (background colour),
   which render correctly on any console font — no box-drawing glyphs that can break on the
   raster font.
-- **`Get-Status` / `Refresh-Status`** — the status line, cached at startup and refreshed after
-  update/install/uninstall.
+- **`Get-Status` / `Refresh-Status`** — the status line. `Get-Status` serves a 10-minute cache;
+  `Refresh-Status` always re-measures and rewrites it.
 - **`Invoke-OpenCode`** — checks OpenCode is present, warns and returns to the menu if not,
   otherwise runs `opencode` (with optional arguments) in the chosen folder and returns to the
   menu when it exits.
@@ -441,7 +462,8 @@ A quick tour for anyone wanting to read or extend the launcher:
   in `$UpdateFiles` into `$LauncherDir`.
 - **`Write-OcShim` / `Add-DirToUserPath`** — write the `oc.cmd` shim and edit the **user**
   `PATH` with `[Environment]::SetEnvironmentVariable` (which, unlike `setx`, does not truncate a
-  long `PATH`).
+  long `PATH`). Path entries are compared through `ConvertTo-ComparablePath`, so case and
+  trailing backslashes don't cause duplicate entries.
 - **Line endings matter for the `.cmd` shim:** it is written with `Set-Content -Encoding ASCII`,
   the self-update re-writes `.cmd`/`.bat` files as CRLF, and `install.ps1`/`run.ps1` normalise
   downloaded files to CRLF. `.gitattributes` keeps `*.cmd`/`*.bat` bytes as committed and checks
@@ -465,4 +487,4 @@ A quick tour for anyone wanting to read or extend the launcher:
 
 MIT — see [LICENSE](LICENSE).
 
-Version 2.3 — By Wayne Scicluna.
+Version 2.4 — By Wayne Scicluna.
