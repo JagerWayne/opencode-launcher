@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "2.7"
+$LauncherVersion = "2.8"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -330,6 +330,86 @@ function Write-OcShim {
 function Action-Run      { Invoke-OpenCode -Arguments @() -Dir (Get-Location).Path }
 function Action-Continue { Invoke-OpenCode -Arguments @("--continue") -Dir (Get-Location).Path }
 
+# --- project sessions --------------------------------------------------------
+
+function Get-ProjectSessions {
+  # Returns the project's top-level sessions (newest first) for a folder, or @().
+  param([string]$Dir)
+  $out = @()
+  Push-Location $Dir
+  try {
+    $raw = & opencode session list --format json 2>$null
+    if ($LASTEXITCODE -eq 0 -and $raw) {
+      # Assign before wrapping: a JSON array through the pipeline comes back as
+      # one nested object under Windows PowerShell 5.1.
+      try { $parsed = ($raw -join "`n") | ConvertFrom-Json; $out = @($parsed) } catch { $out = @() }
+    }
+  } catch { $out = @() }
+  finally { Pop-Location }
+  if (-not $out) { return @() }
+  return $out
+}
+
+function Select-ProjectSession {
+  # Shows a folder's sessions and returns the chosen session id, "NEW" to start
+  # a new session, or $null if the user cancels with ESC.
+  param([string]$Dir, [object[]]$Sessions)
+  while ($true) {
+    Write-Title "Open a project"
+    Write-Host "   Folder " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $Dir -ForegroundColor $C_Hint
+    Write-Section "SESSIONS"
+    Write-Note "Resume a session, or start a new one:" $C_Hint
+    Write-Host ""
+    for ($i = 0; $i -lt $Sessions.Count; $i++) {
+      $s = $Sessions[$i]
+      $title = "$($s.title)"
+      if ([string]::IsNullOrWhiteSpace($title)) { $title = "(untitled)" }
+      $when = ""
+      if ($s.updated) {
+        try { $when = ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$s.updated)).LocalDateTime.ToString("yyyy-MM-dd HH:mm") } catch {}
+      }
+      Write-Host "   [" -NoNewline -ForegroundColor $C_Section
+      Write-Host ($i + 1) -NoNewline -ForegroundColor $C_Key
+      Write-Host "] " -NoNewline -ForegroundColor $C_Section
+      Write-Host $title -NoNewline -ForegroundColor $C_Label
+      if ($when) { Write-Host ("    " + $when) -ForegroundColor $C_Hint } else { Write-Host "" }
+    }
+    Write-Host ""
+    Write-Host "   [" -NoNewline -ForegroundColor $C_Section
+    Write-Host "N" -NoNewline -ForegroundColor $C_Key
+    Write-Host "] " -NoNewline -ForegroundColor $C_Section
+    Write-Host "New session" -ForegroundColor $C_Label
+    Write-Host ""
+    Write-Host "   [ESC] Cancel" -ForegroundColor $C_Back
+    Write-Host ""
+
+    $k = Read-MenuKey
+    if ($k -eq "ESC") { return $null }
+    if ($k -eq "N") { return "NEW" }
+    if ($k -match '[0-9]') {
+      $n = Complete-IndexKey $k
+      if ($n -ge 1 -and $n -le $Sessions.Count) { return $Sessions[$n - 1].id }
+    }
+  }
+}
+
+function Open-Project {
+  # Opens a project folder in opencode, first offering its existing sessions.
+  param([string]$Dir)
+  if (Test-Command "opencode") {
+    $sessions = @(Get-ProjectSessions -Dir $Dir)
+    if ($sessions.Count -gt 0) {
+      $choice = Select-ProjectSession -Dir $Dir -Sessions $sessions
+      if ($null -eq $choice) { return }                      # cancelled -> back
+      if ($choice -eq "NEW") { Invoke-OpenCode -Arguments @($Dir) -Dir $Dir; return }
+      Invoke-OpenCode -Arguments @("--session", $choice, $Dir) -Dir $Dir
+      return
+    }
+  }
+  Invoke-OpenCode -Arguments @($Dir) -Dir $Dir
+}
+
 function Action-Folder {
   Write-Title "Open a folder"
   Write-Note "Enter a folder path (you can drag a folder onto this window),"
@@ -345,7 +425,7 @@ function Action-Folder {
     return
   }
   $full = (Resolve-Path $path).Path
-  Invoke-OpenCode -Arguments @($full) -Dir $full
+  Open-Project -Dir $full
 }
 
 function Action-Web {
@@ -656,6 +736,47 @@ function Manage-SetupShortcut {
   Pause-Menu
 }
 
+function Manage-CreateDesktopShortcut {
+  Write-Title "Add a Desktop Shortcut"
+  $desktop = [Environment]::GetFolderPath("Desktop")
+  if (-not $desktop -or -not (Test-Path $desktop)) {
+    Write-Host ""
+    Write-Note "Could not find your Desktop folder." $C_Bad
+    Pause-Menu
+    return
+  }
+  $scriptPath = Join-Path $LauncherDir "opencode-launcher.ps1"
+  $lnkPath    = Join-Path $desktop "OpenCode Launcher.lnk"
+  Write-Note "Creates a shortcut on your Desktop that opens this launcher."
+  Write-Note "  $lnkPath" $C_Label
+  Write-Host ""
+  if (Test-Path $lnkPath) {
+    $ans = Read-Host "   A shortcut already exists there. Overwrite it? Type YES"
+    if ($ans -ne "YES") { return }
+  }
+  $psExe = Join-Path $PSHOME "powershell.exe"
+  if (-not (Test-Path $psExe)) {
+    $psExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+  }
+  try {
+    $shell = New-Object -ComObject WScript.Shell
+    $sc = $shell.CreateShortcut($lnkPath)
+    $sc.TargetPath       = $psExe
+    $sc.Arguments        = '-NoProfile -ExecutionPolicy Bypass -File "' + $scriptPath + '"'
+    $sc.WorkingDirectory = $LauncherDir
+    $sc.WindowStyle      = 1
+    $sc.Description      = "OpenCode Launcher"
+    $sc.Save()
+    [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+    Write-Host ""
+    Write-Note "Created: $lnkPath" $C_Good
+  } catch {
+    Write-Host ""
+    Write-Note "Could not create the shortcut: $($_.Exception.Message)" $C_Bad
+  }
+  Pause-Menu
+}
+
 function Get-SourceCheckoutMarker {
   # A launcher running out of a git checkout must never delete the checkout.
   # -Force would remove .git (hidden) along with README/LICENSE and the history.
@@ -744,6 +865,7 @@ function Show-ManageMenu {
     Write-Section "LAUNCHER"
     Write-Item "C" "Check for launcher updates"   "this menu"
     Write-Item "O" 'Create the "oc" command'      "open from any terminal"
+    Write-Item "D" "Add a desktop shortcut"       "launch from the Desktop"
     Write-Item "L" "Uninstall this launcher"
     Write-Back
 
@@ -755,6 +877,7 @@ function Show-ManageMenu {
       "R"   { Manage-RestoreMenu }
       "C"   { Manage-CheckLauncherUpdate }
       "O"   { Manage-SetupShortcut }
+      "D"   { Manage-CreateDesktopShortcut }
       "L"   { Manage-UninstallLauncher }
       "ESC" { return }
     }
@@ -1122,12 +1245,11 @@ function Show-ProjectsMenu {
       "D" { Projects-Delete $root; continue }
       "W" { [void](Set-ProjectsDirInteractive); $root = Get-ProjectsDir; continue }
     }
-    # A number loads that project: run OpenCode inside it.
+    # A number loads that project: offer its sessions, then run OpenCode.
     if ($k -match '^[0-9]$') {
       $n = Complete-IndexKey $k
       if ($n -ge 1 -and $n -le $folders.Count) {
-        $full = $folders[$n - 1].FullName
-        Invoke-OpenCode -Arguments @($full) -Dir $full
+        Open-Project -Dir $folders[$n - 1].FullName
       }
     }
   }

@@ -1,6 +1,6 @@
 # OpenCode Launcher
 
-**Version 2.7 — By Wayne Scicluna**
+**Version 2.8 — By Wayne Scicluna**
 
 A colourful, keypress-driven Windows menu for [OpenCode](https://opencode.ai). Instead of
 remembering subcommands and flags, you get one window with a key for each common action —
@@ -14,7 +14,7 @@ for the launcher itself. Colours are used throughout (title bar, section headers
 line, and green/red indicators), and it falls back gracefully if the console is tiny or plain.
 
 ```
-   OpenCode Launcher  by Wayne Scicluna                     v2.7
+   OpenCode Launcher  by Wayne Scicluna                     v2.8
 
    OpenCode opencode v2.0.27     Node v24.17.0
    Folder C:\Users\You
@@ -73,6 +73,7 @@ line, and green/red indicators), and it falls back gracefully if the console is 
     - [[R] Restore from a backup](#r-restore-from-a-backup)
     - [[C] Check for launcher updates](#c-check-for-launcher-updates)
     - [[O] Create the "oc" command](#o-create-the-oc-command)
+    - [[D] Add a desktop shortcut](#d-add-a-desktop-shortcut)
     - [[L] Uninstall this launcher](#l-uninstall-this-launcher)
   - [[Q] Quit](#q-quit)
 - [Backup and restore](#backup-and-restore)
@@ -245,7 +246,11 @@ Starts OpenCode in a folder you choose, without moving the launcher.
 - Press **Enter** on an empty prompt to cancel.
 - Validates the folder exists; if not, it prints `Folder not found: <path>` and returns to the
   menu instead of launching with a bad path.
-- Under the hood: `opencode "<folder>"`.
+- **If the project already has sessions**, it first shows a picker listing them (newest first)
+  with each session's title and last-updated time. Choose one to resume it, press `N` for a new
+  session, or `ESC` to cancel. Lists longer than nine accept two digits.
+- Under the hood: `opencode "<folder>"`, or `opencode --session <id> "<folder>"` when resuming
+  an existing session.
 
 #### [S] Open web interface
 
@@ -283,7 +288,7 @@ moving or re-installing the launcher. The first time you press **[P]** the launc
 folder to use; if it doesn't exist yet it offers to create it.
 
 ```
-   Projects  by Wayne Scicluna                                                v2.7
+   Projects  by Wayne Scicluna                                                v2.8
 
    Working folder C:\coding
 
@@ -302,7 +307,8 @@ folder to use; if it doesn't exist yet it offers to create it.
 ```
 
 - **A number loads that project** — runs OpenCode inside it (same as choosing it with
-  **[F] Open a folder...**). Lists longer than nine accept two digits, so press `1` then `2`
+  **[F] Open a folder...**), including the session picker when the project already has sessions.
+  Lists longer than nine accept two digits, so press `1` then `2`
   for `12`; pressing a single digit acts immediately.
 - Each row shows how many items the folder holds and when it last changed. Nothing is scanned
   recursively, so the list stays instant even for large project trees.
@@ -348,6 +354,7 @@ Sends a project folder to the **Recycle Bin**, so a mistake is recoverable.
     LAUNCHER -----------------------------------------
    [C] Check for launcher updates        this menu
    [O] Create the "oc" command           open from any terminal
+   [D] Add a desktop shortcut            launch from the Desktop
    [L] Uninstall this launcher
 
    [ESC] Back
@@ -426,6 +433,17 @@ place if you say yes. See [Updating the launcher](#updating-the-launcher).
 Creates the `oc.cmd` shim (see [Launch it by typing `oc`](#launch-it-by-typing-oc)) and ensures
 `%USERPROFILE%\.local\bin` is on your user `PATH`. Run it again any time you move the launcher
 folder or on a new machine.
+
+#### [D] Add a desktop shortcut
+
+Creates a shortcut on your **Desktop** that opens this launcher.
+
+- Writes `OpenCode Launcher.lnk` to your Desktop, running
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "<launcher>\opencode-launcher.ps1"` with
+  the launcher folder as its working directory.
+- If a shortcut with that name already exists it asks before overwriting.
+- The Desktop is found via `[Environment]::GetFolderPath('Desktop')`, so it follows a redirected
+  or OneDrive Desktop.
 
 #### [L] Uninstall this launcher
 
@@ -636,4 +654,4 @@ A quick tour for anyone wanting to read or extend the launcher:
 
 MIT — see [LICENSE](LICENSE).
 
-Version 2.7 — By Wayne Scicluna.
+Version 2.8 — By Wayne Scicluna.
