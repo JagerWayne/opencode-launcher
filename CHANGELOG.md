@@ -1,5 +1,18 @@
 # OpenCode Launcher Changelog
 
+## Version 3.1 - Uniform 1-9 lists
+
+Every numbered list in the launcher is now capped at nine rows per page and
+navigated with keys `1`-`9`; two-digit entry is gone.
+
+- **Project folders** - the Rename / Delete / Inspect picker and the search
+  results now page at nine per page (previously listed every folder as 1..N).
+- **Sessions** - the "Open a project" session picker now pages at nine per page.
+- **Backups** - the Restore list now pages at nine per page.
+- `[<]`/`[>]` (or `,`/`.`) move between pages everywhere a list is shown.
+- Removed the now-unused two-digit index helper.
+- The `ProjectsPageSize` cap (9) is covered by a regression test.
+
 ## Version 3.0 - Major Enhancement Release
 
 ### 🎉 Phase 1: Core Improvements (Completed)

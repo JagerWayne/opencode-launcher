@@ -342,15 +342,25 @@ Describe "Projects: delete safety" {
   }
 }
 
-Describe "Projects: index keys" {
-  It "returns -1 for ESC" {
-    Assert-Equal (Complete-IndexKey 'ESC') -1 'ESC'
+Describe "Projects: list cap" {
+  It "caps every project list at 9 rows per page" {
+    # Single source of truth for the 1-9 key cap: the paged project menu,
+    # Show-ProjectPicker, the session picker and the backup restore list all
+    # slice their list to this many rows, so keys never exceed 9.
+    Assert-Equal $script:ProjectsPageSize 9 'folder/session/archive page size'
   }
 
-  It "returns -1 for a non-digit key" {
-    foreach ($k in @('X', 'M', ' ')) {
-      Assert-Equal (Complete-IndexKey $k) -1 "'$k' is not an index"
+  It "uses at most nine rows when slicing a page" {
+    $count = 25
+    $size  = $script:ProjectsPageSize
+    $maxRows = 0
+    for ($page = 0; $page -lt [Math]::Ceiling($count / $size); $page++) {
+      $start = $page * $size
+      $end = [Math]::Min($start + $size - 1, $count - 1)
+      $rows = (@(0..($count - 1))[$start..$end]).Count
+      if ($rows -gt $maxRows) { $maxRows = $rows }
     }
+    Assert-Equal $maxRows 9 'max rows across all pages'
   }
 }
 

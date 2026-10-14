@@ -1,6 +1,6 @@
 # OpenCode Launcher
 
-**Version 3.0 — By Wayne Scicluna**
+**Version 3.1 — By Wayne Scicluna**
 
 A colourful, keypress-driven Windows menu for [OpenCode](https://opencode.ai). Instead of
 remembering subcommands and flags, you get one window with a key for each common action —
@@ -18,7 +18,7 @@ for the launcher itself. Colours are used throughout (title bar, section headers
 line, and green/red indicators), and it falls back gracefully if the console is tiny or plain.
 
 ```
-   OpenCode Launcher  by Wayne Scicluna                     v3.0
+   OpenCode Launcher  by Wayne Scicluna                     v3.1
 
    OpenCode opencode v2.0.27     Node v24.17.0
    Folder C:\Users\You
@@ -342,7 +342,8 @@ Starts OpenCode in a folder you choose, without moving the launcher.
   menu instead of launching with a bad path.
 - **If the project already has sessions**, it first shows a picker listing them (newest first)
   with each session's title and last-updated time. Choose one to resume it, press `N` for a new
-  session, or `ESC` to cancel. Lists longer than nine accept two digits.
+  session, or `ESC` to cancel. At most nine are shown per page; use `>`/`<` (or `.`/`,`) to page
+  through longer lists, and choose with keys `1`-`9`.
 - Under the hood: `opencode "<folder>"`, or `opencode --session <id> "<folder>"` when resuming
   an existing session.
 
@@ -382,7 +383,7 @@ moving or re-installing the launcher. The first time you press **[P]** the launc
 folder to use; if it doesn't exist yet it offers to create it.
 
 ```
-   Projects  by Wayne Scicluna                                                v3.0
+   Projects  by Wayne Scicluna                                                v3.1
 
    Working folder C:\coding
 
@@ -539,8 +540,9 @@ Backs up your opencode setup into a timestamped archive. See
 
 #### [R] Restore from a backup
 
-Lists your backups as a numbered pick-list (newest first, with size and date). Press the number
-to choose one, then type `YES` to confirm. `ESC` goes back.
+Lists your backups as a numbered pick-list (newest first, with size and date), nine per page;
+use `>`/`<` (or `.`/`,`) to page through longer lists. Press a number (`1`-`9`) to choose one,
+then type `YES` to confirm. `ESC` goes back.
 
 #### [C] Check for launcher updates
 
@@ -773,7 +775,7 @@ A quick tour for anyone wanting to read or extend the launcher:
 
 MIT — see [LICENSE](LICENSE).
 
-Version 3.0 — By Wayne Scicluna.
+Version 3.1 — By Wayne Scicluna.
 
 ---
 

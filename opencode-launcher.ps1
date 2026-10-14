@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "3.0"
+$LauncherVersion = "3.1"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -362,18 +362,29 @@ function Get-ProjectSessions {
 }
 
 function Select-ProjectSession {
-  # Shows a folder's sessions and returns the chosen session id, "NEW" to start
-  # a new session, or $null if the user cancels with ESC.
+  # Shows a folder's sessions, 9 per page, and returns the chosen session id,
+  # "NEW" to start a new session, or $null if the user cancels with ESC.
+  # Keys are always 1-9: a page never lists more than nine rows.
   param([string]$Dir, [object[]]$Sessions)
+  $pageSize = $script:ProjectsPageSize
+  $page = 0
   while ($true) {
+    $totalPages = [Math]::Max(1, [int][Math]::Ceiling($Sessions.Count / $pageSize))
+    if ($page -ge $totalPages) { $page = $totalPages - 1 }
+    if ($page -lt 0) { $page = 0 }
+
+    $start = $page * $pageSize
+    $end = [Math]::Min($start + $pageSize - 1, $Sessions.Count - 1)
+    $slice = @($Sessions[$start..$end])
+
     Write-Title "Open a project"
     Write-Host "   Folder " -NoNewline -ForegroundColor $C_Hint
     Write-Host $Dir -ForegroundColor $C_Hint
-    Write-Section "SESSIONS"
+    Write-Section "SESSIONS $(if ($totalPages -gt 1) { "- Page $($page + 1) of $totalPages" })"
     Write-Note "Resume a session, or start a new one:" $C_Hint
     Write-Host ""
-    for ($i = 0; $i -lt $Sessions.Count; $i++) {
-      $s = $Sessions[$i]
+    for ($i = 0; $i -lt $slice.Count; $i++) {
+      $s = $slice[$i]
       $title = "$($s.title)"
       if ([string]::IsNullOrWhiteSpace($title)) { $title = "(untitled)" }
       $when = ""
@@ -385,6 +396,14 @@ function Select-ProjectSession {
       Write-Host "] " -NoNewline -ForegroundColor $C_Section
       Write-Host $title -NoNewline -ForegroundColor $C_Label
       if ($when) { Write-Host ("    " + $when) -ForegroundColor $C_Hint } else { Write-Host "" }
+    }
+    if ($totalPages -gt 1) {
+      Write-Host ""
+      if ($page -gt 0) { Write-Host '   [<] Previous Page' -NoNewline -ForegroundColor $C_Section }
+      if ($page -lt $totalPages - 1) {
+        if ($page -gt 0) { Write-Host "     " -NoNewline }
+        Write-Host '[>] Next Page' -ForegroundColor $C_Section
+      } else { Write-Host "" }
     }
     Write-Host ""
     Write-Host "   [" -NoNewline -ForegroundColor $C_Section
@@ -398,10 +417,13 @@ function Select-ProjectSession {
     $k = Read-MenuKey
     if ($k -eq "ESC") { return $null }
     if ($k -eq "N") { return "NEW" }
-    if ($k -match '[0-9]') {
-      $n = Complete-IndexKey $k
-      if ($n -ge 1 -and $n -le $Sessions.Count) { return $Sessions[$n - 1].id }
+    if ($k -match '^[1-9]$') {
+      $n = [int]$k
+      if ($n -ge 1 -and $n -le $slice.Count) { return $slice[$n - 1].id }
+      continue
     }
+    if ($k -eq ">" -or $k -eq ".") { if ($page -lt $totalPages - 1) { $page++ }; continue }
+    if ($k -eq "<" -or $k -eq ",") { if ($page -gt 0) { $page-- }; continue }
   }
 }
 
@@ -635,35 +657,55 @@ function Manage-Backup {
 
 function Manage-RestoreMenu {
   $archiveDir = Join-Path $env:USERPROFILE ".config\opencode\backup\archives"
+  $pageSize = $script:ProjectsPageSize
+  $page = 0
   while ($true) {
-    Write-Title "Restore a Backup"
     $archives = @()
     if (Test-Path $archiveDir) {
       $archives = @(Get-ChildItem $archiveDir -Filter "opencode-backup-*" -File | Sort-Object LastWriteTime -Descending)
     }
     if ($archives.Count -eq 0) {
+      Write-Title "Restore a Backup"
       Write-Note "No backups found." $C_Warn
       Pause-Menu; return
     }
+
+    $totalPages = [Math]::Max(1, [int][Math]::Ceiling($archives.Count / $pageSize))
+    if ($page -ge $totalPages) { $page = $totalPages - 1 }
+    if ($page -lt 0) { $page = 0 }
+
+    $start = $page * $pageSize
+    $end = [Math]::Min($start + $pageSize - 1, $archives.Count - 1)
+    $slice = @($archives[$start..$end])
+
+    Write-Title "Restore a Backup"
+    Write-Section "BACKUPS $(if ($totalPages -gt 1) { "- Page $($page + 1) of $totalPages" })"
     Write-Note "Choose a backup to restore (newest first):" $C_Hint
     Write-Host ""
-    for ($i = 0; $i -lt $archives.Count; $i++) {
-      $a = $archives[$i]
+    for ($i = 0; $i -lt $slice.Count; $i++) {
+      $a = $slice[$i]
       $kb = [math]::Round($a.Length / 1KB, 1)
       Write-Host "   [" -NoNewline -ForegroundColor $C_Section
       Write-Host ($i + 1) -NoNewline -ForegroundColor $C_Key
       Write-Host "] " -NoNewline -ForegroundColor $C_Section
       Write-Host ("{0}  ({1} KB, {2})" -f $a.Name, $kb, $a.LastWriteTime.ToString("yyyy-MM-dd HH:mm")) -ForegroundColor $C_Label
     }
+    if ($totalPages -gt 1) {
+      Write-Host ""
+      if ($page -gt 0) { Write-Host '   [<] Previous Page' -NoNewline -ForegroundColor $C_Section }
+      if ($page -lt $totalPages - 1) {
+        if ($page -gt 0) { Write-Host "     " -NoNewline }
+        Write-Host '[>] Next Page' -ForegroundColor $C_Section
+      } else { Write-Host "" }
+    }
     Write-Back
 
     $k = Read-MenuKey
     if ($k -eq "ESC") { return }
-
-    $idx = 0
-    if ([int]::TryParse($k, [ref]$idx)) {
-      if ($idx -ge 1 -and $idx -le $archives.Count) {
-        $chosen = $archives[$idx - 1]
+    if ($k -match '^[1-9]$') {
+      $idx = [int]$k
+      if ($idx -ge 1 -and $idx -le $slice.Count) {
+        $chosen = $slice[$idx - 1]
         Write-Host ""
         $ans = Read-Host ("   Restore '" + $chosen.Name + "'? Type YES to confirm")
         if ($ans -eq "YES") {
@@ -672,7 +714,10 @@ function Manage-RestoreMenu {
           Pause-Menu
         }
       }
+      continue
     }
+    if ($k -eq ">" -or $k -eq ".") { if ($page -lt $totalPages - 1) { $page++ }; continue }
+    if ($k -eq "<" -or $k -eq ",") { if ($page -gt 0) { $page-- }; continue }
   }
 }
 
@@ -1294,26 +1339,6 @@ function Projects-Statistics {
   }
   
   Pause-Menu
-}
-
-function Complete-IndexKey {
-  # Turns an already-read key into a list index. Accepts 1-9, or two digits for
-  # lists longer than nine, by peeking for an already-buffered second key so a
-  # single press still returns immediately.
-  param([string]$FirstKey)
-  if ($FirstKey -eq "ESC") { return -1 }
-  $s = $FirstKey
-  if ($s -notmatch '[0-9]') { return -1 }
-  try {
-    if ([Console]::KeyAvailable) {
-      $k2 = [Console]::ReadKey($true)
-      $s2 = [string]$k2.KeyChar
-      if ($s2 -match '[0-9]') { $s = $s + $s2 }
-    }
-  } catch {}
-  $n = 0
-  if ([int]::TryParse($s, [ref]$n)) { return $n }
-  return -1
 }
 
 function Write-ProjectRow {
