@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "2.8"
+$LauncherVersion = "3.0"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -46,6 +46,14 @@ $SettingsPath = Join-Path $SettingsDir "settings.json"
 # Empty until the user picks one, which the Projects menu asks for on first use.
 $script:ProjectsDir = ""
 
+# ----- project pagination & caching ------------------------------------------
+
+$script:ProjectsPage = 0
+$script:ProjectsPageSize = 9
+$script:ProjectListCache = $null
+$script:ProjectCacheTime = $null
+$script:ProjectCacheTTL = 30  # seconds
+
 # Where to look for launcher updates, and which files to refresh.
 $UpdateRepo   = "JagerWayne/opencode-launcher"
 $UpdateBranch = "main"
@@ -70,6 +78,9 @@ $C_Good    = "Green"
 $C_Bad     = "Red"
 $C_Warn    = "Yellow"
 $C_Back    = "DarkGray"
+$C_Favorite = "Cyan"
+$C_Recent  = "Magenta"
+$C_Git     = "DarkYellow"
 
 # ----- helpers ---------------------------------------------------------------
 
@@ -397,6 +408,10 @@ function Select-ProjectSession {
 function Open-Project {
   # Opens a project folder in opencode, first offering its existing sessions.
   param([string]$Dir)
+  
+  # Track this as a recent project
+  Add-RecentProject -Path $Dir
+  
   if (Test-Command "opencode") {
     $sessions = @(Get-ProjectSessions -Dir $Dir)
     if ($sessions.Count -gt 0) {
@@ -953,12 +968,333 @@ function Test-ValidProjectName {
   return $null
 }
 
+# ----- Phase 1: Caching & Performance ----------------------------------------
+
+function Get-CachedProjectList {
+  param([string]$Root, [switch]$Force)
+  $now = Get-Date
+  if (-not $Force -and $script:ProjectListCache -and $script:ProjectCacheTime) {
+    $age = ($now - $script:ProjectCacheTime).TotalSeconds
+    if ($age -lt $script:ProjectCacheTTL) {
+      return $script:ProjectListCache
+    }
+  }
+  $folders = @(Get-ChildItem $Root -Directory -Force -ErrorAction SilentlyContinue | Sort-Object Name)
+  $script:ProjectListCache = $folders
+  $script:ProjectCacheTime = $now
+  return $folders
+}
+
+function Invalidate-ProjectCache {
+  $script:ProjectListCache = $null
+  $script:ProjectCacheTime = $null
+}
+
 function Get-ProjectFolder {
   # Every folder directly inside the Default Working Directory is a project.
-  param([string]$Root)
+  param([string]$Root, [switch]$NoCache)
   if (-not $Root -or -not (Test-Path $Root -PathType Container)) { return @() }
-  return @(Get-ChildItem $Root -Directory -Force -ErrorAction SilentlyContinue |
-           Sort-Object Name)
+  if ($NoCache) {
+    return @(Get-ChildItem $Root -Directory -Force -ErrorAction SilentlyContinue | Sort-Object Name)
+  }
+  return @(Get-CachedProjectList -Root $Root)
+}
+
+# ----- Phase 1: Recent Projects ----------------------------------------------
+
+function Add-RecentProject {
+  param([string]$Path)
+  $s = Read-Settings
+  if (-not $s.ContainsKey("RecentProjects")) {
+    $s["RecentProjects"] = @()
+  }
+  $recent = @($s["RecentProjects"])
+  $entry = @{
+    path = $Path
+    opened = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  }
+  # Remove existing entry for this path
+  $recent = @($recent | Where-Object { $_.path -ne $Path })
+  # Add to front
+  $recent = @($entry) + $recent
+  # Keep only last 5
+  if ($recent.Count -gt 5) {
+    $recent = $recent[0..4]
+  }
+  $s["RecentProjects"] = $recent
+  [void](Write-Settings $s)
+}
+
+function Get-RecentProjects {
+  $s = Read-Settings
+  if (-not $s.ContainsKey("RecentProjects")) { return @() }
+  $recent = @($s["RecentProjects"])
+  # Filter out projects that no longer exist
+  return @($recent | Where-Object { Test-Path $_.path -PathType Container })
+}
+
+function Format-RelativeTime {
+  param([int64]$UnixTimeMs)
+  try {
+    $dt = [DateTimeOffset]::FromUnixTimeMilliseconds($UnixTimeMs).LocalDateTime
+    $diff = (Get-Date) - $dt
+    if ($diff.TotalMinutes -lt 1) { return "just now" }
+    if ($diff.TotalMinutes -lt 60) { return "$([int]$diff.TotalMinutes)m ago" }
+    if ($diff.TotalHours -lt 24) { return "$([int]$diff.TotalHours)h ago" }
+    if ($diff.TotalDays -lt 7) { return "$([int]$diff.TotalDays)d ago" }
+    return $dt.ToString("MMM dd")
+  } catch {
+    return ""
+  }
+}
+
+# ----- Phase 1: Favorites ----------------------------------------------------
+
+function Get-FavoriteProjects {
+  $s = Read-Settings
+  if (-not $s.ContainsKey("FavoriteProjects")) { return @() }
+  return @($s["FavoriteProjects"] | Where-Object { Test-Path $_ -PathType Container })
+}
+
+function Test-IsFavorite {
+  param([string]$Path)
+  $favs = @(Get-FavoriteProjects)
+  $normalized = ConvertTo-ComparablePath $Path
+  foreach ($f in $favs) {
+    if ((ConvertTo-ComparablePath $f) -eq $normalized) { return $true }
+  }
+  return $false
+}
+
+function Toggle-ProjectFavorite {
+  param([string]$Path)
+  $s = Read-Settings
+  if (-not $s.ContainsKey("FavoriteProjects")) {
+    $s["FavoriteProjects"] = @()
+  }
+  $favs = @($s["FavoriteProjects"])
+  $normalized = ConvertTo-ComparablePath $Path
+  $found = $false
+  $newFavs = @()
+  foreach ($f in $favs) {
+    if ((ConvertTo-ComparablePath $f) -eq $normalized) {
+      $found = $true
+    } else {
+      $newFavs += $f
+    }
+  }
+  if (-not $found) {
+    $newFavs += $Path
+  }
+  $s["FavoriteProjects"] = $newFavs
+  [void](Write-Settings $s)
+  return (-not $found)
+}
+
+# ----- Phase 2: Git Integration ----------------------------------------------
+
+function Get-ProjectGitStatus {
+  param([string]$Path)
+  if (-not (Test-Command "git")) { return $null }
+  if (-not (Test-Path (Join-Path $Path ".git"))) { return $null }
+  try {
+    Push-Location $Path
+    $status = & git status --porcelain --branch 2>$null
+    $ahead = 0
+    $behind = 0
+    $changes = 0
+    if ($status) {
+      foreach ($line in $status) {
+        if ($line -match '##.*\[ahead (\d+).*behind (\d+)\]') {
+          $ahead = [int]$matches[1]
+          $behind = [int]$matches[2]
+        } elseif ($line -match '##.*\[ahead (\d+)\]') {
+          $ahead = [int]$matches[1]
+        } elseif ($line -match '##.*\[behind (\d+)\]') {
+          $behind = [int]$matches[1]
+        } elseif ($line -match '^[MADRCU?!]') {
+          $changes++
+        }
+      }
+    }
+    Pop-Location
+    return @{ Ahead = $ahead; Behind = $behind; Changes = $changes }
+  } catch {
+    Pop-Location
+    return $null
+  }
+}
+
+function Format-GitIndicator {
+  param($GitStatus)
+  if (-not $GitStatus) { return "" }
+  $parts = @()
+  if ($GitStatus.Changes -gt 0) {
+    $parts += "[$([char]0x25CF)$($GitStatus.Changes)]"
+  }
+  if ($GitStatus.Ahead -gt 0) {
+    $parts += "[$([char]0x2191)$($GitStatus.Ahead)]"
+  }
+  if ($GitStatus.Behind -gt 0) {
+    $parts += "[$([char]0x2193)$($GitStatus.Behind)]"
+  }
+  return ($parts -join "")
+}
+
+# ----- Phase 3: Project Inspector --------------------------------------------
+
+function Get-ProjectStats {
+  param([string]$Path)
+  $files = @(Get-ChildItem $Path -Recurse -Force -File -ErrorAction SilentlyContinue)
+  $size = ($files | Measure-Object Length -Sum).Sum
+  if (-not $size) { $size = 0 }
+  $types = @{}
+  foreach ($f in $files) {
+    $ext = $f.Extension.ToLower()
+    if (-not $ext) { $ext = "(no ext)" }
+    if (-not $types.ContainsKey($ext)) { $types[$ext] = 0 }
+    $types[$ext]++
+  }
+  $sessions = @()
+  if (Test-Command "opencode") {
+    $sessions = @(Get-ProjectSessions -Dir $Path)
+  }
+  return @{
+    FileCount = $files.Count
+    Size = $size
+    Types = $types
+    SessionCount = $sessions.Count
+  }
+}
+
+function Projects-Inspect {
+  param([string]$Root)
+  $folders = @(Get-ProjectFolder $Root)
+  if ($folders.Count -eq 0) {
+    Write-Title "Inspect Project"
+    Write-Host ""
+    Write-Note "No projects to inspect." $C_Warn
+    Pause-Menu
+    return
+  }
+  Write-Title "Inspect Project"
+  $chosen = Show-ProjectPicker $Root "Choose a project to inspect:"
+  if (-not $chosen) { return }
+  
+  Write-Title "Project Details"
+  Write-Note "Analyzing project..." $C_Hint
+  $stats = Get-ProjectStats -Path $chosen.FullName
+  $git = Get-ProjectGitStatus -Path $chosen.FullName
+  
+  Write-Host ""
+  Write-Host "   Name: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $chosen.Name -ForegroundColor $C_Label
+  Write-Host "   Path: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $chosen.FullName -ForegroundColor $C_Hint
+  Write-Host "   Size: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host "$([math]::Round($stats.Size / 1MB, 2)) MB" -ForegroundColor $C_Label
+  Write-Host "   Files: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $stats.FileCount -ForegroundColor $C_Label
+  Write-Host "   Modified: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $chosen.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor $C_Label
+  Write-Host "   Sessions: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $stats.SessionCount -ForegroundColor $C_Label
+  
+  if ($git) {
+    Write-Host ""
+    Write-Host "   Git Status:" -ForegroundColor $C_Git
+    Write-Host "     Uncommitted: " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $git.Changes -ForegroundColor $C_Label
+    Write-Host "     Ahead: " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $git.Ahead -ForegroundColor $C_Label
+    Write-Host "     Behind: " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $git.Behind -ForegroundColor $C_Label
+  }
+  
+  Write-Host ""
+  Write-Host "   File Types:" -ForegroundColor $C_Hint
+  $top = $stats.Types.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 5
+  foreach ($t in $top) {
+    Write-Host "     $($t.Key): " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $t.Value -ForegroundColor $C_Label
+  }
+  
+  Pause-Menu
+}
+
+# ----- Phase 4: Project Statistics -------------------------------------------
+
+function Projects-Statistics {
+  param([string]$Root)
+  Write-Title "Project Statistics"
+  Write-Note "Analyzing all projects..." $C_Hint
+  
+  $folders = @(Get-ProjectFolder $Root)
+  if ($folders.Count -eq 0) {
+    Write-Host ""
+    Write-Note "No projects to analyze." $C_Warn
+    Pause-Menu
+    return
+  }
+  
+  $totalSize = 0
+  $totalFiles = 0
+  $withSessions = 0
+  $largest = $null
+  $largestSize = 0
+  $newest = $null
+  $newestTime = [DateTime]::MinValue
+  
+  foreach ($f in $folders) {
+    $files = @(Get-ChildItem $f.FullName -Recurse -Force -File -ErrorAction SilentlyContinue)
+    $size = ($files | Measure-Object Length -Sum).Sum
+    if (-not $size) { $size = 0 }
+    $totalSize += $size
+    $totalFiles += $files.Count
+    
+    if ($size -gt $largestSize) {
+      $largestSize = $size
+      $largest = $f
+    }
+    
+    if ($f.LastWriteTime -gt $newestTime) {
+      $newestTime = $f.LastWriteTime
+      $newest = $f
+    }
+    
+    if (Test-Command "opencode") {
+      $sessions = @(Get-ProjectSessions -Dir $f.FullName)
+      if ($sessions.Count -gt 0) { $withSessions++ }
+    }
+  }
+  
+  Write-Host ""
+  Write-Host "   Total Projects: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $folders.Count -ForegroundColor $C_Label
+  Write-Host "   Total Size: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host "$([math]::Round($totalSize / 1GB, 2)) GB" -ForegroundColor $C_Label
+  Write-Host "   Total Files: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $totalFiles -ForegroundColor $C_Label
+  Write-Host "   With Sessions: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $withSessions -ForegroundColor $C_Label
+  Write-Host "   Never Opened: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host ($folders.Count - $withSessions) -ForegroundColor $C_Warn
+  
+  if ($largest) {
+    Write-Host ""
+    Write-Host "   Largest Project:" -ForegroundColor $C_Hint
+    Write-Host "     $($largest.Name)" -NoNewline -ForegroundColor $C_Label
+    Write-Host " - $([math]::Round($largestSize / 1MB, 1)) MB" -ForegroundColor $C_Hint
+  }
+  
+  if ($newest) {
+    Write-Host ""
+    Write-Host "   Most Recent:" -ForegroundColor $C_Hint
+    Write-Host "     $($newest.Name)" -NoNewline -ForegroundColor $C_Label
+    Write-Host " - $($newest.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))" -ForegroundColor $C_Hint
+  }
+  
+  Pause-Menu
 }
 
 function Complete-IndexKey {
@@ -982,12 +1318,33 @@ function Complete-IndexKey {
 }
 
 function Write-ProjectRow {
-  param($Folder, [int]$Index)
-  $count = @(Get-ChildItem $Folder.FullName -Force -ErrorAction SilentlyContinue).Count
+  param($Folder, [int]$Index, [switch]$ShowGit, [switch]$ShowIndicators)
+  
+  # Build the line parts
   Write-Host "   [" -NoNewline -ForegroundColor $C_Section
   Write-Host $Index -NoNewline -ForegroundColor $C_Key
   Write-Host "] " -NoNewline -ForegroundColor $C_Section
+  
+  # Show favorite star
+  if ($ShowIndicators -and (Test-IsFavorite $Folder.FullName)) {
+    Write-Host "$([char]0x2605) " -NoNewline -ForegroundColor $C_Favorite
+  }
+  
   Write-Host $Folder.Name -NoNewline -ForegroundColor $C_Label
+  
+  # Show git status if enabled
+  if ($ShowGit) {
+    $git = Get-ProjectGitStatus -Path $Folder.FullName
+    if ($git) {
+      $indicator = Format-GitIndicator $git
+      if ($indicator) {
+        Write-Host " $indicator" -NoNewline -ForegroundColor $C_Git
+      }
+    }
+  }
+  
+  # Show item count and date
+  $count = @(Get-ChildItem $Folder.FullName -Force -ErrorAction SilentlyContinue).Count
   Write-Host ("    {0} items, {1}" -f $count, $Folder.LastWriteTime.ToString("yyyy-MM-dd HH:mm")) -ForegroundColor $C_Hint
 }
 
@@ -1051,6 +1408,190 @@ function Set-ProjectsDirInteractive {
   return $true
 }
 
+# ----- Phase 1: Search Projects ----------------------------------------------
+
+function Projects-Search {
+  param([string]$Root)
+  Write-Title "Search Projects"
+  Write-Host ""
+  $query = Read-Host "   Search (Enter to cancel)"
+  if ([string]::IsNullOrWhiteSpace($query)) { return }
+  
+  $folders = @(Get-ProjectFolder $Root)
+  $matches = @($folders | Where-Object { $_.Name -like "*$query*" })
+  
+  if ($matches.Count -eq 0) {
+    Write-Host ""
+    Write-Note "No projects match '$query'." $C_Warn
+    Pause-Menu
+    return
+  }
+  
+  while ($true) {
+    Write-Title "Search Results"
+    Write-Note "Found $($matches.Count) project(s) matching '$query':" $C_Hint
+    Write-Host ""
+    for ($i = 0; $i -lt $matches.Count; $i++) {
+      Write-ProjectRow $matches[$i] ($i + 1) -ShowIndicators
+    }
+    Write-Back
+    
+    $k = Read-MenuKey
+    if ($k -eq "ESC") { return }
+    if ($k -match '^[0-9]$') {
+      $n = Complete-IndexKey $k
+      if ($n -ge 1 -and $n -le $matches.Count) {
+        Open-Project -Dir $matches[$n - 1].FullName
+        return
+      }
+    }
+  }
+}
+
+# ----- Phase 2: Quick Actions ------------------------------------------------
+
+function Show-ProjectActions {
+  param($Folder)
+  
+  while ($true) {
+    Write-Title "Project Actions"
+    Write-Host "   Project: " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $Folder.Name -ForegroundColor $C_Label
+    Write-Host ""
+    Write-Item "O" "Open in OpenCode"       "open with session selection"
+    Write-Item "E" "Open in Explorer"       "file manager"
+    Write-Item "T" "Open in Terminal"       "PowerShell window"
+    if (Test-Command "code") {
+      Write-Item "V" "Open in VS Code"      "if installed"
+    }
+    Write-Item "I" "Inspect project"        "show details"
+    Write-Item "*" "Toggle favorite"        (if (Test-IsFavorite $Folder.FullName) { "remove star" } else { "add star" })
+    Write-Item "R" "Rename"                 "change folder name"
+    Write-Item "D" "Delete"                 "to Recycle Bin"
+    Write-Back
+    
+    $k = Read-MenuKey
+    if ($k -eq "ESC") { return }
+    
+    switch ($k) {
+      "O" {
+        Open-Project -Dir $Folder.FullName
+        return
+      }
+      "E" {
+        Start-Process "explorer.exe" -ArgumentList $Folder.FullName
+        return
+      }
+      "T" {
+        Start-Process "powershell" -ArgumentList "-NoExit", "-Command", "cd '$($Folder.FullName)'"
+        return
+      }
+      "V" {
+        if (Test-Command "code") {
+          Start-Process "code" -ArgumentList $Folder.FullName
+          return
+        }
+      }
+      "I" {
+        Show-ProjectDetails -Folder $Folder
+      }
+      "*" {
+        $added = Toggle-ProjectFavorite -Path $Folder.FullName
+        Write-Host ""
+        if ($added) {
+          Write-Note "Added to favorites." $C_Good
+        } else {
+          Write-Note "Removed from favorites." $C_Hint
+        }
+        Start-Sleep -Milliseconds 800
+      }
+      "R" {
+        # Return to rename flow
+        return "RENAME"
+      }
+      "D" {
+        # Return to delete flow
+        return "DELETE"
+      }
+    }
+  }
+}
+
+function Show-ProjectDetails {
+  param($Folder)
+  
+  Write-Title "Project Details"
+  Write-Note "Analyzing..." $C_Hint
+  $stats = Get-ProjectStats -Path $Folder.FullName
+  $git = Get-ProjectGitStatus -Path $Folder.FullName
+  
+  Write-Host ""
+  Write-Host "   Name: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $Folder.Name -ForegroundColor $C_Label
+  Write-Host "   Path: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $Folder.FullName -ForegroundColor $C_Hint
+  Write-Host "   Size: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host "$([math]::Round($stats.Size / 1MB, 2)) MB" -ForegroundColor $C_Label
+  Write-Host "   Files: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $stats.FileCount -ForegroundColor $C_Label
+  Write-Host "   Modified: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $Folder.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") -ForegroundColor $C_Label
+  Write-Host "   Sessions: " -NoNewline -ForegroundColor $C_Hint
+  Write-Host $stats.SessionCount -ForegroundColor $C_Label
+  
+  if ($git) {
+    Write-Host ""
+    Write-Host "   Git Status:" -ForegroundColor $C_Git
+    Write-Host "     Uncommitted: " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $git.Changes -ForegroundColor $C_Label
+    Write-Host "     Ahead: " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $git.Ahead -ForegroundColor $C_Label
+    Write-Host "     Behind: " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $git.Behind -ForegroundColor $C_Label
+  }
+  
+  Write-Host ""
+  Write-Host "   Top File Types:" -ForegroundColor $C_Hint
+  $top = $stats.Types.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 5
+  foreach ($t in $top) {
+    Write-Host "     $($t.Key): " -NoNewline -ForegroundColor $C_Hint
+    Write-Host $t.Value -ForegroundColor $C_Label
+  }
+  
+  Pause-Menu
+}
+
+# ----- Phase 3: Help ---------------------------------------------------------
+
+function Show-ProjectsHelp {
+  Write-Title "Projects Menu Help"
+  Write-Host ""
+  Write-Host "   NAVIGATION:" -ForegroundColor $C_Section
+  Write-Note "  1-9        Open project by number"
+  Write-Note "  10-99      Type two digits quickly for projects 10+"
+  Write-Note "  > or .     Next page"
+  Write-Note "  < or ,     Previous page"
+  Write-Host ""
+  Write-Host "   ACTIONS:" -ForegroundColor $C_Section
+  Write-Note "  /          Search for a project by name"
+  Write-Note "  *          Toggle favorite on selected project"
+  Write-Note "  N          Create new project folder"
+  Write-Note "  R          Rename a project"
+  Write-Note "  D          Delete a project (to Recycle Bin)"
+  Write-Note "  I          Inspect project details"
+  Write-Note "  T          View statistics for all projects"
+  Write-Note "  W          Change working folder"
+  Write-Note "  G          Toggle Git status indicators"
+  Write-Note "  ESC        Back to main menu"
+  Write-Host ""
+  Write-Host "   TIPS:" -ForegroundColor $C_Section
+  Write-Note "  $([char]0x2605) = Favorite project"
+  Write-Note "  [$([char]0x25CF)2] = 2 uncommitted changes"
+  Write-Note "  [$([char]0x2191)1] = 1 commit ahead of remote"
+  Write-Note "  [$([char]0x2193)1] = 1 commit behind remote"
+  Pause-Menu
+}
+
 function Projects-New {
   param([string]$Root)
   Write-Title "New Project Folder"
@@ -1067,6 +1608,7 @@ function Projects-New {
   $target = Join-Path $Root $name.Trim()
   try {
     New-Item -ItemType Directory -Path $target -Force | Out-Null
+    Invalidate-ProjectCache
   } catch {
     Write-Host ""
     Write-Note "Could not create it: $($_.Exception.Message)" $C_Bad
@@ -1108,6 +1650,7 @@ function Projects-Rename {
   }
   try {
     Rename-Item -LiteralPath $chosen.FullName -NewName $name.Trim() -ErrorAction Stop
+    Invalidate-ProjectCache
     Write-Host ""
     Write-Note ("Renamed '{0}' to '{1}'." -f $chosen.Name, $name.Trim()) $C_Good
   } catch {
@@ -1193,6 +1736,7 @@ function Projects-Delete {
 
   try {
     if (Move-ToRecycleBin $chosen.FullName) {
+      Invalidate-ProjectCache
       Write-Host ""
       Write-Note ("'{0}' moved to the Recycle Bin." -f $chosen.Name) $C_Good
       Pause-Menu
@@ -1218,38 +1762,118 @@ function Show-ProjectsMenu {
     if (-not $root) { return }
   }
 
+  $script:ProjectsPage = 0
+  $showGit = $false
+
   while ($true) {
     Write-Title "Projects"
     Write-Host "   Working folder " -NoNewline -ForegroundColor $C_Hint
     Write-Host $root -ForegroundColor $C_Label
-    $folders = @(Get-ProjectFolder $root)
+    
+    # Get all folders and apply favorites sorting
+    $allFolders = @(Get-ProjectFolder $root)
+    $favs = @(Get-FavoriteProjects)
+    $favorites = @($allFolders | Where-Object { Test-IsFavorite $_.FullName })
+    $regular = @($allFolders | Where-Object { -not (Test-IsFavorite $_.FullName) })
+    $folders = @($favorites) + @($regular)
+    
     if ($folders.Count -eq 0) {
       Write-Host ""
       Write-Note "Nothing in here yet - press [N] to create a project." $C_Warn
     } else {
-      Write-Section "PROJECTS"
-      for ($i = 0; $i -lt $folders.Count; $i++) { Write-ProjectRow $folders[$i] ($i + 1) }
+      # Calculate pagination
+      $totalPages = [Math]::Ceiling($folders.Count / $script:ProjectsPageSize)
+      if ($script:ProjectsPage -ge $totalPages) { $script:ProjectsPage = $totalPages - 1 }
+      if ($script:ProjectsPage -lt 0) { $script:ProjectsPage = 0 }
+      
+      $start = $script:ProjectsPage * $script:ProjectsPageSize
+      $end = [Math]::Min($start + $script:ProjectsPageSize - 1, $folders.Count - 1)
+      $pageProjects = @($folders[$start..$end])
+      
+      # Show recent projects if on first page
+      if ($script:ProjectsPage -eq 0) {
+        $recent = @(Get-RecentProjects)
+        if ($recent.Count -gt 0) {
+          Write-Section "RECENT"
+          $displayed = 0
+          foreach ($r in $recent) {
+            if ($displayed -ge 3) { break }
+            $folder = Get-Item $r.path -ErrorAction SilentlyContinue
+            if ($folder) {
+              $when = Format-RelativeTime $r.opened
+              Write-Host "     " -NoNewline
+              Write-Host $folder.Name -NoNewline -ForegroundColor $C_Recent
+              Write-Host "  ($when)" -ForegroundColor $C_Hint
+              $displayed++
+            }
+          }
+        }
+      }
+      
+      # Show projects
+      Write-Section "PROJECTS $(if ($totalPages -gt 1) { "- Page $($script:ProjectsPage + 1) of $totalPages" })"
+      for ($i = 0; $i -lt $pageProjects.Count; $i++) {
+        Write-ProjectRow $pageProjects[$i] ($i + 1) -ShowGit:$showGit -ShowIndicators
+      }
+      
+      # Pagination controls
+      if ($totalPages -gt 1) {
+        Write-Host ""
+        if ($script:ProjectsPage -gt 0) {
+          Write-Host '   [<] Previous Page' -NoNewline -ForegroundColor $C_Section
+        }
+        if ($script:ProjectsPage -lt $totalPages - 1) {
+          if ($script:ProjectsPage -gt 0) { Write-Host "     " -NoNewline }
+          Write-Host '[>] Next Page' -ForegroundColor $C_Section
+        } else {
+          Write-Host ""
+        }
+      }
     }
+    
     Write-Section "ACTIONS"
+    Write-Item "/" "Search projects"         "find by name"
     Write-Item "N" "New project folder"      "create a folder here"
     Write-Item "R" "Rename a project"        "rename the folder"
     Write-Item "D" "Delete a project"        "to the Recycle Bin"
+    Write-Item "I" "Inspect a project"       "show details"
+    Write-Item "T" "Statistics"              "all projects summary"
+    Write-Item "G" "Toggle Git indicators"   (if ($showGit) { "hide" } else { "show" })
     Write-Item "W" "Set the working folder"  "where projects live"
+    Write-Item "?" "Help"                    "keyboard shortcuts"
     Write-Back
 
     $k = Read-MenuKey
     if ($k -eq "ESC") { return }
+    
     switch ($k) {
-      "N" { Projects-New $root; continue }
-      "R" { Projects-Rename $root; continue }
-      "D" { Projects-Delete $root; continue }
-      "W" { [void](Set-ProjectsDirInteractive); $root = Get-ProjectsDir; continue }
+      "/"   { Projects-Search $root; Invalidate-ProjectCache; continue }
+      "N"   { Projects-New $root; continue }
+      "R"   { Projects-Rename $root; continue }
+      "D"   { Projects-Delete $root; continue }
+      "I"   { Projects-Inspect $root; continue }
+      "T"   { Projects-Statistics $root; continue }
+      "G"   { $showGit = -not $showGit; continue }
+      "W"   { [void](Set-ProjectsDirInteractive); $root = Get-ProjectsDir; Invalidate-ProjectCache; continue }
+      "?"   { Show-ProjectsHelp; continue }
+      ">"   { if ($script:ProjectsPage -lt ([Math]::Ceiling($folders.Count / $script:ProjectsPageSize) - 1)) { $script:ProjectsPage++; continue } }
+      "<"   { if ($script:ProjectsPage -gt 0) { $script:ProjectsPage--; continue } }
+      "."   { if ($script:ProjectsPage -lt ([Math]::Ceiling($folders.Count / $script:ProjectsPageSize) - 1)) { $script:ProjectsPage++; continue } }
+      ","   { if ($script:ProjectsPage -gt 0) { $script:ProjectsPage--; continue } }
     }
-    # A number loads that project: offer its sessions, then run OpenCode.
+    
+    # A number loads that project: offer its sessions or quick actions
     if ($k -match '^[0-9]$') {
       $n = Complete-IndexKey $k
-      if ($n -ge 1 -and $n -le $folders.Count) {
-        Open-Project -Dir $folders[$n - 1].FullName
+      if ($n -ge 1 -and $n -le $pageProjects.Count) {
+        $chosen = $pageProjects[$n - 1]
+        # Show quick actions menu
+        $action = Show-ProjectActions -Folder $chosen
+        if ($action -eq "RENAME") {
+          Projects-Rename $root
+        } elseif ($action -eq "DELETE") {
+          Projects-Delete $root
+        }
       }
     }
   }
@@ -1263,6 +1887,26 @@ function Show-MainMenu {
     Write-StatusLine
     Write-Host "   Folder " -NoNewline -ForegroundColor $C_Hint
     Write-Host (Get-Location).Path -ForegroundColor $C_Hint
+    
+    # Show recent projects
+    $recent = @(Get-RecentProjects)
+    if ($recent.Count -gt 0) {
+      Write-Section "RECENT PROJECTS"
+      $shown = [Math]::Min($recent.Count, 5)
+      for ($i = 0; $i -lt $shown; $i++) {
+        $r = $recent[$i]
+        $folder = Get-Item $r.path -ErrorAction SilentlyContinue
+        if ($folder) {
+          $when = Format-RelativeTime $r.opened
+          Write-Host "   [" -NoNewline -ForegroundColor $C_Section
+          Write-Host ($i + 1) -NoNewline -ForegroundColor $C_Key
+          Write-Host "] " -NoNewline -ForegroundColor $C_Section
+          Write-Host $folder.Name -NoNewline -ForegroundColor $C_Recent
+          Write-Host "  ($when)" -ForegroundColor $C_Hint
+        }
+      }
+    }
+    
     Write-Section "START"
     Write-Item "R" "Run OpenCode here"            "this folder"
     Write-Item "C" "Resume last session"          "picks up where you left off"
@@ -1277,7 +1921,21 @@ function Show-MainMenu {
     Write-Item "Q" "Quit"
     Write-Host ""
 
-    switch (Read-MenuKey) {
+    $k = Read-MenuKey
+    
+    # Handle recent project selection (1-5)
+    if ($recent.Count -gt 0 -and $k -match '^[1-5]$') {
+      $idx = [int]$k - 1
+      if ($idx -lt $recent.Count) {
+        $r = $recent[$idx]
+        if (Test-Path $r.path -PathType Container) {
+          Open-Project -Dir $r.path
+          continue
+        }
+      }
+    }
+    
+    switch ($k) {
       "R"   { Action-Run }
       "C"   { Action-Continue }
       "F"   { Action-Folder }
