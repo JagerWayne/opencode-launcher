@@ -17,7 +17,7 @@ $ErrorActionPreference = "Continue"
 try { $Host.UI.RawUI.WindowTitle = "OpenCode Launcher" } catch {}
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LauncherVersion = "3.1"
+$LauncherVersion = "3.2"
 $LauncherAuthor  = "Wayne Scicluna"
 
 # ----- locations -------------------------------------------------------------
@@ -1506,7 +1506,8 @@ function Show-ProjectActions {
       Write-Item "V" "Open in VS Code"      "if installed"
     }
     Write-Item "I" "Inspect project"        "show details"
-    Write-Item "*" "Toggle favorite"        (if (Test-IsFavorite $Folder.FullName) { "remove star" } else { "add star" })
+    if (Test-IsFavorite $Folder.FullName) { $favHint = "remove star" } else { $favHint = "add star" }
+    Write-Item "*" "Toggle favorite"        $favHint
     Write-Item "R" "Rename"                 "change folder name"
     Write-Item "D" "Delete"                 "to Recycle Bin"
     Write-Back
@@ -1878,7 +1879,8 @@ function Show-ProjectsMenu {
     Write-Item "D" "Delete a project"        "to the Recycle Bin"
     Write-Item "I" "Inspect a project"       "show details"
     Write-Item "T" "Statistics"              "all projects summary"
-    Write-Item "G" "Toggle Git indicators"   (if ($showGit) { "hide" } else { "show" })
+    if ($showGit) { $gitHint = "hide" } else { $gitHint = "show" }
+    Write-Item "G" "Toggle Git indicators"   $gitHint
     Write-Item "W" "Set the working folder"  "where projects live"
     Write-Item "?" "Help"                    "keyboard shortcuts"
     Write-Back

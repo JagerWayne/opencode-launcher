@@ -342,6 +342,17 @@ Describe "Projects: delete safety" {
   }
 }
 
+Describe "Windows PowerShell 5.1 compatibility" {
+  It "does not use 'if' as an inline argument expression" {
+    # PS 5.1 parses  Foo (if (...) { ... } else { ... })  as a call to a
+    # command named "if" and throws at runtime ("The term 'if' is not
+    # recognized..."). The value must be computed into a variable first.
+    # "$(if ...)" inside a string and "$var = if (...) { }" are both fine.
+    $src = Get-Content (Join-Path $RepoRoot 'opencode-launcher.ps1') -Raw
+    Assert-True ($src -notmatch '(?<![$\w])\(if\s*\(') 'inline (if ...) used as an argument'
+  }
+}
+
 Describe "Projects: list cap" {
   It "caps every project list at 9 rows per page" {
     # Single source of truth for the 1-9 key cap: the paged project menu,

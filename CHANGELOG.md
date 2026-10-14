@@ -1,5 +1,13 @@
 # OpenCode Launcher Changelog
 
+## Version 3.2 - Fix menu draw error
+
+- Fixed a crash drawing the Projects and Project Actions menus on Windows
+  PowerShell 5.1. `if` was used inline as a command argument
+  (`Write-Item ... (if (...) { ... } else { ... })`), which PS 5.1 rejects
+  ("The term 'if' is not recognized..."). The hint text is now computed into a
+  variable first.
+
 ## Version 3.1 - Uniform 1-9 lists
 
 Every numbered list in the launcher is now capped at nine rows per page and
