@@ -1177,8 +1177,7 @@ function Projects-Inspect {
     Pause-Menu
     return
   }
-  Write-Title "Inspect Project"
-  $chosen = Show-ProjectPicker $Root "Choose a project to inspect:"
+  $chosen = Show-ProjectPicker -Folders $folders -Title "Inspect a Project" -Heading "Choose a project to inspect:"
   if (-not $chosen) { return }
   
   Write-Title "Project Details"
@@ -1349,17 +1348,51 @@ function Write-ProjectRow {
 }
 
 function Show-ProjectPicker {
-  # Draws the numbered project list and returns the chosen folder, or $null.
-  param([string]$Root, [string]$Heading)
-  $folders = @(Get-ProjectFolder $Root)
-  Write-Host ""
-  Write-Note $Heading $C_Hint
-  Write-Host ""
-  for ($i = 0; $i -lt $folders.Count; $i++) { Write-ProjectRow $folders[$i] ($i + 1) }
-  Write-Back
-  $n = Complete-IndexKey (Read-MenuKey)
-  if ($n -ge 1 -and $n -le $folders.Count) { return $folders[$n - 1] }
-  return $null
+  # Draws a paginated (9 per page) numbered project list and returns the chosen
+  # folder, or $null if cancelled with ESC. Keys are always 1-9: the page never
+  # lists more than nine rows, so two-digit entry is not accepted.
+  param([object[]]$Folders, [string]$Title, [string]$Heading, [switch]$ShowIndicators)
+  if (-not $Folders -or $Folders.Count -eq 0) { return $null }
+  $pageSize = $script:ProjectsPageSize
+  $page = 0
+  while ($true) {
+    Write-Title $Title
+    Write-Host ""
+    Write-Note $Heading $C_Hint
+    Write-Host ""
+
+    $totalPages = [Math]::Max(1, [int][Math]::Ceiling($Folders.Count / $pageSize))
+    if ($page -ge $totalPages) { $page = $totalPages - 1 }
+    if ($page -lt 0) { $page = 0 }
+
+    $start = $page * $pageSize
+    $end = [Math]::Min($start + $pageSize - 1, $Folders.Count - 1)
+    $slice = @($Folders[$start..$end])
+
+    for ($i = 0; $i -lt $slice.Count; $i++) {
+      Write-ProjectRow $slice[$i] ($i + 1) -ShowIndicators:$ShowIndicators
+    }
+
+    if ($totalPages -gt 1) {
+      Write-Host ""
+      if ($page -gt 0) { Write-Host '   [<] Previous Page' -NoNewline -ForegroundColor $C_Section }
+      if ($page -lt $totalPages - 1) {
+        if ($page -gt 0) { Write-Host "     " -NoNewline }
+        Write-Host '[>] Next Page' -ForegroundColor $C_Section
+      } else { Write-Host "" }
+    }
+    Write-Back
+
+    $k = Read-MenuKey
+    if ($k -eq "ESC") { return $null }
+    if ($k -match '^[1-9]$') {
+      $n = [int]$k
+      if ($n -ge 1 -and $n -le $slice.Count) { return $slice[$n - 1] }
+      continue
+    }
+    if ($k -eq ">" -or $k -eq ".") { if ($page -lt $totalPages - 1) { $page++ }; continue }
+    if ($k -eq "<" -or $k -eq ",") { if ($page -gt 0) { $page-- }; continue }
+  }
 }
 
 function Set-ProjectsDirInteractive {
@@ -1427,25 +1460,8 @@ function Projects-Search {
     return
   }
   
-  while ($true) {
-    Write-Title "Search Results"
-    Write-Note "Found $($matches.Count) project(s) matching '$query':" $C_Hint
-    Write-Host ""
-    for ($i = 0; $i -lt $matches.Count; $i++) {
-      Write-ProjectRow $matches[$i] ($i + 1) -ShowIndicators
-    }
-    Write-Back
-    
-    $k = Read-MenuKey
-    if ($k -eq "ESC") { return }
-    if ($k -match '^[0-9]$') {
-      $n = Complete-IndexKey $k
-      if ($n -ge 1 -and $n -le $matches.Count) {
-        Open-Project -Dir $matches[$n - 1].FullName
-        return
-      }
-    }
-  }
+  $chosen = Show-ProjectPicker -Folders $matches -Title "Search Results" -Heading "Found $($matches.Count) project(s) matching '$query':" -ShowIndicators
+  if ($chosen) { Open-Project -Dir $chosen.FullName }
 }
 
 # ----- Phase 2: Quick Actions ------------------------------------------------
@@ -1567,8 +1583,7 @@ function Show-ProjectsHelp {
   Write-Title "Projects Menu Help"
   Write-Host ""
   Write-Host "   NAVIGATION:" -ForegroundColor $C_Section
-  Write-Note "  1-9        Open project by number"
-  Write-Note "  10-99      Type two digits quickly for projects 10+"
+  Write-Note "  1-9        Open project by number (max 9 per page)"
   Write-Note "  > or .     Next page"
   Write-Note "  < or ,     Previous page"
   Write-Host ""
@@ -1637,7 +1652,7 @@ function Projects-Rename {
     return
   }
   Write-Title "Rename a Project Folder"
-  $chosen = Show-ProjectPicker $Root "Choose the project to rename:"
+  $chosen = Show-ProjectPicker -Folders $folders -Title "Rename a Project Folder" -Heading "Choose the project to rename:"
   if (-not $chosen) { return }
   Write-Host ""
   $name = Read-Host ("   New name for '" + $chosen.Name + "'")
@@ -1702,7 +1717,7 @@ function Projects-Delete {
     return
   }
   Write-Title "Delete a Project Folder"
-  $chosen = Show-ProjectPicker $Root "Choose the project to delete:"
+  $chosen = Show-ProjectPicker -Folders $folders -Title "Delete a Project Folder" -Heading "Choose the project to delete:"
   if (-not $chosen) { return }
 
   # Never delete the launcher itself, or a folder that contains it.
@@ -1862,9 +1877,10 @@ function Show-ProjectsMenu {
       ","   { if ($script:ProjectsPage -gt 0) { $script:ProjectsPage--; continue } }
     }
     
-    # A number loads that project: offer its sessions or quick actions
-    if ($k -match '^[0-9]$') {
-      $n = Complete-IndexKey $k
+    # A number loads that project: offer its sessions or quick actions.
+    # The page lists at most nine rows, so keys are 1-9 only.
+    if ($k -match '^[1-9]$') {
+      $n = [int]$k
       if ($n -ge 1 -and $n -le $pageProjects.Count) {
         $chosen = $pageProjects[$n - 1]
         # Show quick actions menu

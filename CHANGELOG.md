@@ -130,8 +130,7 @@ Your `settings.json` now supports:
 - `Q` or `ESC` - Quit
 
 ### Projects Menu
-- `1-9` - Select project (opens quick actions)
-- `10-99` - Type two digits quickly for projects 10+
+- `1-9` - Select project (opens quick actions); at most nine rows per page
 - `>` or `.` - Next page
 - `<` or `,` - Previous page
 - `/` - Search projects

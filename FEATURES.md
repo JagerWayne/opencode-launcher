@@ -273,8 +273,7 @@ Press `[?]` in Projects menu for interactive help:
 Projects Menu Help
 
    NAVIGATION:
-  1-9        Open project by number
-  10-99      Type two digits quickly
+  1-9        Open project by number (max 9 per page)
   > or .     Next page
   < or ,     Previous page
 
@@ -366,10 +365,11 @@ Projects Menu Help
 
 ## 🔧 Power User Tips
 
-### Tip 1: Two-Digit Navigation
-Projects 10-99 can be selected by typing digits quickly:
-- Press `1` then `5` rapidly → Opens project 15
-- Press `1` then wait → Opens project 1
+### Tip 1: Page Navigation
+Each page lists at most nine projects, numbered 1-9:
+- Press `>` (or `.`) to move to the next page
+- Press `<` (or `,`) to go back a page
+- Type `1`-`9` to pick a project on the current page
 
 ### Tip 2: Keyboard Combos
 - `P` → `/` → type name → `1` — Search and open in 4 keys
